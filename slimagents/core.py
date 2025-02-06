@@ -523,5 +523,10 @@ class Agent:
             max_turns: int = float("inf"), 
             execute_tools: bool = True
     ) -> Response:
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
         return loop.run_until_complete(self.run(prompt, stream, max_turns, execute_tools))

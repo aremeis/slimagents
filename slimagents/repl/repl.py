@@ -85,5 +85,9 @@ async def run_demo_loop_async(agent, stream=False, log_level: int = None) -> Non
 
 def run_demo_loop(*args, **kwargs):
     """Synchronous wrapper for run_demo_loop_async"""
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     loop.run_until_complete(run_demo_loop_async(*args, **kwargs))
