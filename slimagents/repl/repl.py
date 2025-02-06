@@ -2,7 +2,7 @@ import json
 import asyncio
 import logging
 
-from agentix import logger
+from slimagents import logger
 async def process_and_print_streaming_response(response):
     content = ""
     last_sender = ""
@@ -70,7 +70,7 @@ async def run_demo_loop_async(agent, stream=False, log_level: int = None) -> Non
     if log_level is not None:
         enable_logging(log_level)
 
-    print("Starting Agentix CLI 🪶")
+    print("Starting SlimAgents CLI 🪶")
 
     while True:
         user_input = input("\033[90mUser\033[0m: ")
