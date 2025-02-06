@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "slimagents"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
     {name = "Are Meisfjord"},
     {name = "OpenAI Solutions"}
 ]
-description = "A lightweight and developer-friendly library for building and orchestrating agents"
+description = "A lightweight and developer-friendly library for building and orchestrating AI agents"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -33,26 +33,6 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/aremeis/slimagents"
 "Bug Tracker" = "https://github.com/aremeis/slimagents/issues"
-
-[project.optional-dependencies]
-test = [
-    "numpy",
-    "pytest",
-    "requests",
-    "tqdm",
-    "instructor",
-]
-dev = [
-    "pre-commit",
-]
-all = [
-    "numpy",
-    "pytest",
-    "requests",
-    "tqdm",
-    "instructor",
-    "pre-commit",
-]
 
 [tool.setuptools]
 packages = {find = {where = ["."], exclude = ["tests*"]}}

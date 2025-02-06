@@ -28,7 +28,7 @@ pip install git+https://github.com/aremeis/slimagents.git
 ## Documentation
 
 In SlimAgents, an Agent is simply a wrapper around a large language model, textual instructions, and a set of tools. 
-Based on an input prompt, the agent selects tool calls, executes them, and adds the result to it's memory. 
+Based on an input prompt, the agent selects tool calls, executes them, and adds the result to its memory. 
 This process is repeated until the LLM does not generate any more tool calls, in which case the agent returns the last 
 message content generated from the LLM.
 
@@ -67,7 +67,7 @@ Agent: There are 3 'R's in the word 'STRAWBERRY'.
 ### Tools
 
 As you can see from the example above, a tool is simply a normal Python function! This means that it is very easy to integrate 
-existing Python libraries with your agents. Use the tool's docstring to describe the tool and it's arguments to the LLM.
+existing Python libraries with your agents. Use the tool's docstring to describe the tool and its arguments to the LLM.
 
 SlimAgents supports both synchronous and asynchronous tool calls. If the LLM generates several async tool calls, they will be 
 executed in parallel. 
@@ -79,7 +79,7 @@ Tools can also be implemented as methods. This allows for encapsulation of the a
 ```python
 # !pip install python-weather
 
-from slimagents.core import Agent
+from slimagents import Agent
 import python_weather
 
 class WeatherAgent(Agent):
@@ -147,8 +147,7 @@ Instructions can be dynamic, i.e. generated based on the agent's state. A typica
 information that change based on previous tool calls. To accomplish this, simply override the `instructions` property of the agent:
 
 ```python
-from slimagents import Agent
-from slimagents.repl import run_demo_loop
+from slimagents import Agent, run_demo_loop
 
 class StrictAgent(Agent):
     def __init__(self, max_responses: int):
