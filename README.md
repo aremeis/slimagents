@@ -1,25 +1,33 @@
-# AgentLib
+# Agentix
 
-A lightweight yet powerful library for developing agentic applications.
+A lightweight and developer-friendly library for building and orchestrating agents
 
 
 ## Install
 
 Requires Python 3.10+
 
+Latest stable release:
+
 ```shell
-pip install git+ssh://git@github.com/aremeis/agentlib.git
+pip install agentix
+```
+
+Latest development version:
+
+```shell
+pip install git+ssh://git@github.com/aremeis/agentix.git
 ```
 
 or
 
 ```shell
-pip install git+https://github.com/aremeis/agentlib.git
+pip install git+https://github.com/aremeis/agentix.git
 ```
 
 ## Documentation
 
-In AgentLib, an Agent is simply a wrapper around a large language model, textual instructions, and a set of tools. 
+In Agentix, an Agent is simply a wrapper around a large language model, textual instructions, and a set of tools. 
 Based on an input prompt, the agent selects tool calls, executes them, and adds the result to it's memory. 
 This process is repeated until the LLM does not generate any more tool calls, in which case the agent returns the last 
 message content generated from the LLM.
@@ -27,7 +35,7 @@ message content generated from the LLM.
 Here's a simple example:
 
 ```python
-from agentlib import Agent
+from agentix import Agent
 
 def python_evaluator(expression: str) -> str:
     """Evaluate a Python expression. Always use this tool for calculations and other complex operations."""
@@ -61,7 +69,7 @@ Agent: There are 3 'R's in the word 'STRAWBERRY'.
 As you can see from the example above, a tool is simply a normal Python function! This means that it is very easy to integrate 
 existing Python libraries with your agents. Use the tool's docstring to describe the tool and it's arguments to the LLM.
 
-AgentLib supports both synchronous and asynchronous tool calls. If the LLM generates several async tool calls, they will be 
+Agentix supports both synchronous and asynchronous tool calls. If the LLM generates several async tool calls, they will be 
 executed in parallel. 
 
 NOTE: The method `run_sync` is used in the examples in this document. In async applications, you should use the `run` method instead.
@@ -71,7 +79,7 @@ Tools can also be implemented as methods. This allows for encapsulation of the a
 ```python
 # !pip install python-weather
 
-from agentlib.core import Agent
+from agentix.core import Agent
 import python_weather
 
 class WeatherAgent(Agent):
@@ -108,13 +116,13 @@ Agent: The temperature difference between London and Paris is 1°C, with London 
 
 ### LLMs
 
-AgentLib uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood, which means that you can use virtually any LLM to power your agents! 
+Agentix uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood, which means that you can use virtually any LLM to power your agents! 
 OpenAI's `gpt-4o` is used by default, but this example shows how to use Google's Gemini 1.5 Pro instead. See LiteLLM's 
 [documentation](https://github.com/BerriAI/litellm?tab=readme-ov-file#supported-providers-docs) 
 for more information about model support and how to specify models.
 
 ```python
-from agentlib import Agent
+from agentix import Agent
 
 agent = Agent(
     model="gemini/gemini-1.5-pro",
@@ -132,15 +140,15 @@ I am a large language model, trained by Google.
 ### Instructions
 
 Instructions are passed to the LLM as the `system` message. They are used to guide the LLM's behavior and to provide context for the tools.
-AgentLib does not come with pre-defined instructions, so your agent's behavior is entirely controlled by the information you provide as
+Agentix does not come with pre-defined instructions, so your agent's behavior is entirely controlled by the information you provide as
 instructions and in the tool documentation. 
 
 Instructions can be dynamic, i.e. generated based on the agent's state. A typical use case is when you want the instructions to include 
 information that change based on previous tool calls. To accomplish this, simply override the `instructions` property of the agent:
 
 ```python
-from agentlib import Agent
-from agentlib.repl import run_demo_loop
+from agentix import Agent
+from agentix.repl import run_demo_loop
 
 class StrictAgent(Agent):
     def __init__(self, max_responses: int):
@@ -168,7 +176,7 @@ run_demo_loop(agent)
 ```
 
 ```
-Starting AgentLib CLI 🪶
+Starting Agentix CLI 🪶
 User: Hi
 StrictAgent: update_responses_left()
 StrictAgent: Hello! How can I assist you today?
@@ -214,7 +222,7 @@ Sales Agent
 ```
 
 If you think this feature looks like it is borrowed from OpenAI's [Swarm](https://github.com/openai/swarm) framework, you are right! In fact, 
-AgentLib started out as a fork of Swarm, so big shoutout to OpenAI and the Swarm team for the inspiration!
+Agentix started out as a fork of Swarm, so big shoutout to OpenAI and the Swarm team for the inspiration!
 
 Major changes from Swarm:
 - Supports virtually any LLM
