@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentlib"
+version = "0.1.0"
+authors = [
+    {name = "Are Meisfjord"},
+    {name = "OpenAI Solutions"}
+]
+description = "A lightweight and developer-friendly library for building and orchestrating agents"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "litellm>=1.59.0",
+    "pydantic>=2.0.0",
+    "jsonref>=1.1.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "numpy",
+    "pytest",
+    "requests",
+    "tqdm",
+    "instructor",
+]
+dev = [
+    "pre-commit",
+]
+all = [
+    "numpy",
+    "pytest",
+    "requests",
+    "tqdm",
+    "instructor",
+    "pre-commit",
+]
+
+[tool.setuptools]
+packages = {find = {where = ["."], exclude = ["tests*"]}}
+zip-safe = true
+include-package-data = true
+
+[tool.autopep8]
+max_line_length = 120
+ignore = ["E501", "W6"]
+in-place = true
+recursive = true
+aggressive = 3
