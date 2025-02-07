@@ -28,7 +28,7 @@ pip install git+https://github.com/aremeis/slimagents.git
 ## Documentation
 
 In SlimAgents, an Agent is simply a wrapper around a large language model, textual instructions, and a set of tools. 
-Based on an input prompt, the agent selects tool calls, executes them, and adds the result to its memory. 
+Based on the inputs, the agent selects tool calls, executes them, and adds the result to its memory. 
 This process is repeated until the LLM does not generate any more tool calls, in which case the agent returns the last 
 message content generated from the LLM.
 
@@ -196,7 +196,9 @@ user's messages and the agent's responses.
 
 ### Memory
 
-WIP
+The memory of an agent is simply the history of the agent's messages, using the same format as the chat history in the OpenAI API
+(but without the 'system' or 'developer' message). Tool selection and tool call results are added to the memory, as well as the 
+LLM's response when the agent is done.
 
 
 ### Handoffs
@@ -220,6 +222,9 @@ print(response.agent.name)
 Sales Agent
 ```
 
+Note: When using handoffs, the memory of the original agent will be shared with the new agent. This means that the new agent will have 
+access to the original agent's memory, and any changes to the memory will be reflected in both agents.
+
 If you think this feature looks like it is borrowed from OpenAI's [Swarm](https://github.com/openai/swarm) framework, you are right! In fact, 
 SlimAgents started out as a fork of Swarm, so big shoutout to OpenAI and the Swarm team for the inspiration!
 
@@ -228,7 +233,31 @@ Major changes from Swarm:
 - Designed for subclassing `Agent` to encapsulate agent behavior
 - Supports async, concurrent tool calls
 - Uses proper Python logging instead of print statements
-- Supports structured outputs with Pydantic
+- Supports multi modal inputs (see below)
+- Supports structured outputs with Pydantic (see below)
+
+
+### Multi modal inputs
+
+SlimAgents makes it easy to use multi modal inputs like images, videos, audio files and PDF files (as long as these types are supported by the LLM).
+Here's an example:
+
+```python
+from slimagents import Agent
+
+pdf_converter = Agent(
+    model="gemini/gemini-2.0-flash", # 👈 Gemini 2.0 Flash supports PDF files as input
+)
+
+with open("annual_report.pdf", "rb") as pdf_file:
+    response = pdf_converter.run_sync(pdf_file, "Convert this PDF to Markdown.")
+    print(response.value)
+```
+
+
+### Structured outputs
+
+WIP
 
 
 ### The response object
