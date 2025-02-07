@@ -1,9 +1,21 @@
 import copy
 import inspect
 from datetime import datetime
+import logging
 from typing import Union
 import jsonref
 from pydantic import BaseModel
+import mimetypes
+
+logger = logging.getLogger(__name__)
+
+_has_magic = False
+try:
+    from magic import Magic
+    _has_magic = True
+except ImportError as e:
+    logger.warning(f"python-magic is not properly installed, content based MIME type detection will be disabled. Cause: {e}")
+    pass
 
 
 def merge_fields(target, source):
@@ -144,3 +156,46 @@ def type_to_response_format(type_: Union[dict, type[BaseModel]]) -> dict:
     else:
         raise ValueError(f"Unsupported type for response_format: {type_}")
     
+
+def get_mime_type_from_file_like_object(file_like_object):
+    """
+    Determines the MIME type of a file-like object by examining its name (if available)
+    or its content as a fallback.
+    
+    Args:
+        file_like_object: A file-like object with read and seek methods
+        
+    Returns:
+        str: The detected MIME type of the content, or 'application/octet-stream' if detection fails
+    """
+    # First try to get MIME type from filename if available
+    if hasattr(file_like_object, 'name'):
+        mime_type, _ = mimetypes.guess_type(file_like_object.name)
+        if mime_type:
+            return mime_type
+    
+    # Try content-based detection if python-magic is available
+    if _has_magic:
+        current_pos = file_like_object.tell()
+        try:
+            # Read the first 2048 bytes for MIME detection
+            content = file_like_object.read(2048)
+            
+            # Create a Magic instance for MIME type detection
+            mime = Magic(mime=True)
+            
+            # Detect MIME type
+            if isinstance(content, str):
+                mime_type = mime.from_buffer(content.encode('utf-8'))
+            else:
+                mime_type = mime.from_buffer(content)
+                
+            return mime_type
+        except Exception:
+            pass
+        finally:
+            # Restore original position
+            file_like_object.seek(current_pos)
+            
+    # If python-magic is not available or fails, return a default mime type
+    return 'application/octet-stream'

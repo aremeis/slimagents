@@ -3,6 +3,8 @@ import asyncio
 import logging
 
 from slimagents import logger
+
+
 async def process_and_print_streaming_response(response):
     content = ""
     last_sender = ""
@@ -83,11 +85,11 @@ async def run_demo_loop_async(agent, stream=False, log_level: int = None) -> Non
         agent = response.agent
 
 
-def run_demo_loop(*args, **kwargs):
+def run_demo_loop(agent, stream=False, log_level: int = None):
     """Synchronous wrapper for run_demo_loop_async"""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_demo_loop_async(*args, **kwargs))
+    loop.run_until_complete(run_demo_loop_async(agent, stream, log_level))

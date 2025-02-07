@@ -1,9 +1,10 @@
 # Standard library imports
+import base64
 import copy
 from dataclasses import dataclass, field
 import json
 from collections import defaultdict
-from typing import List, Callable, Optional, Union, Coroutine, Any
+from typing import Callable, Optional, Union, Coroutine, Any
 import inspect
 import asyncio
 import logging
@@ -14,7 +15,7 @@ from litellm.types.completion import ChatCompletionMessageToolCallParam, Functio
 from pydantic import BaseModel
 
 # Local imports
-from .util import function_to_json, merge_chunk, type_to_response_format
+from .util import function_to_json, get_mime_type_from_file_like_object, merge_chunk, type_to_response_format
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ AgentFunction = Callable[..., Union[str, "Agent", dict, Coroutine[Any, Any, Unio
 @dataclass
 class Response():
     value: Any
-    messages: List
+    messages: list
     agent: "Agent"
 
 @dataclass
@@ -52,9 +53,9 @@ class Result():
 
 @dataclass
 class HandleToolCallResult():
-    messages: List
+    messages: list
     agent: Optional["Agent"] = None
-    filtered_tool_calls: List[ChatCompletionMessageToolCallParam] = field(default_factory=list)
+    filtered_tool_calls: list[ChatCompletionMessageToolCallParam] = field(default_factory=list)
     result: Optional[Result] = None
 
 # Agent class
@@ -67,14 +68,14 @@ class Agent:
             name: Optional[str] = None, 
             model: Optional[str] = None,
             instructions: Optional[Union[str, Callable[[], str]]] = None, 
-            memory: Optional[List[dict]] = None,
-            tools: Optional[List[AgentFunction]] = None, 
+            memory: Optional[list[dict]] = None,
+            tools: Optional[list[AgentFunction]] = None, 
             tool_choice: Optional[Union[str, dict]] = None, 
             parallel_tool_calls: Optional[bool] = None, 
             response_format: Optional[Union[dict, type[BaseModel]]] = None,
             temperature: Optional[float] = None,
             top_p: Optional[float] = None,
-            stop: Optional[List[str]] = None,
+            stop: Optional[list[str]] = None,
             max_completion_tokens: Optional[int] = None,
             **extra_llm_params
     ):
@@ -319,7 +320,7 @@ class Agent:
 
     async def handle_tool_calls(
             self,
-            tool_calls: List[ChatCompletionMessageToolCallParam],
+            tool_calls: list[ChatCompletionMessageToolCallParam],
     ) -> HandleToolCallResult:
         function_map = {f.__name__: f for f in self.tools}
         partial_response = HandleToolCallResult(messages=[], agent=None, filtered_tool_calls=[])
@@ -455,16 +456,47 @@ class Agent:
             )
         }
 
+
+    def _get_user_message(self, inputs: tuple) -> dict:
+        def user_message_part(input):
+            if isinstance(input, str):
+                return {
+                    "type": "text",
+                    "text": input,
+                }
+            elif isinstance(input, dict):
+                return input
+            elif hasattr(input, 'read'):  # is file-like object
+                mime_type = get_mime_type_from_file_like_object(input)
+                content = input.read()
+                base64_content = base64.b64encode(content).decode('utf-8')
+                return {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{base64_content}",
+                    },
+                }
+            else:
+                raise ValueError(f"Unsupported prompt element type: {type(input)}")
+
+        if len(inputs) == 1 and isinstance(inputs[0], str):
+            # Keep it simple if there's only one string input
+            return {"role": "user", "content": inputs[0]}
+        else:
+            return {"role": "user", "content": [user_message_part(input) for input in inputs]} 
+        
+
     async def run(
             self,
-            prompt: str,
+            *inputs,
             stream: Optional[bool] = False,
             max_turns: Optional[int] = float("inf"),
             execute_tools: Optional[bool] = True,
     ) -> Response:
-        memory = self.memory
-        memory.append({"role": "user", "content": prompt})
-        self.memory = memory
+        if inputs:
+            memory = self.memory
+            memory.append(self._get_user_message(inputs))
+            self.memory = memory
 
         if stream:
             return self._run_and_stream(
@@ -474,7 +506,7 @@ class Agent:
         
         init_len = len(memory)
         active_agent = self
-        self.logger.info("Starting run with prompt: %s", prompt)
+        self.logger.info("Starting run with prompt: %s", inputs)
 
         while len(memory) - init_len < max_turns and active_agent:
             active_agent.logger.info("Getting completion...")
@@ -515,10 +547,11 @@ class Agent:
             messages=memory[init_len:],
             agent=active_agent,
         )
+    
 
     def run_sync(
             self, 
-            prompt: str, 
+            *inputs,
             stream: bool = False, 
             max_turns: int = float("inf"), 
             execute_tools: bool = True
@@ -529,4 +562,4 @@ class Agent:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
-        return loop.run_until_complete(self.run(prompt, stream, max_turns, execute_tools))
+        return loop.run_until_complete(self.run(*inputs, stream=stream, max_turns=max_turns, execute_tools=execute_tools))
