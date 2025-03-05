@@ -424,10 +424,10 @@ class Agent:
             if not message["tool_calls"]:
                 message["tool_calls"] = None
             active_agent.logger.debug("Received completion: %s", message)
-            memory.append(message)
 
             if not message["tool_calls"] or not execute_tools:
                 active_agent.logger.debug("Ending turn.")
+                memory.append(message)
                 break
 
             # convert tool_calls to objects
@@ -444,6 +444,9 @@ class Agent:
 
             # handle function calls and switching agents
             partial_response = await active_agent.handle_tool_calls(tool_calls)
+            if partial_response.filtered_tool_calls:
+                # Only add tool calls to memory if there are any left after filtering
+                memory.append(message)
             memory.extend(partial_response.messages)
             if partial_response.agent:
                 active_agent = partial_response.agent
@@ -493,10 +496,9 @@ class Agent:
             max_turns: Optional[int] = float("inf"),
             execute_tools: Optional[bool] = True,
     ) -> Response:
+        memory = self.memory
         if inputs:
-            memory = self.memory
             memory.append(self._get_user_message(inputs))
-            self.memory = memory
 
         if stream:
             return self._run_and_stream(
