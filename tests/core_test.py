@@ -27,13 +27,14 @@ async def test_agent_init():
         instructions="You always answer YES to all questions.",
         temperature=0.0,
     )
-    response = await agent.run("Are you a helpful assistant?")
-    assert response.value == "YES"
-    assert len(response.messages) == 2
-    assert response.messages[0]["role"] == "user"
-    assert response.messages[0]["content"] == "Are you a helpful assistant?"
-    assert response.messages[1]["role"] == "assistant"
-    assert response.messages[1]["content"] == "YES"
+    memory_delta = []
+    value = await agent("Are you a helpful assistant?", memory_delta=memory_delta)
+    assert value == "YES"
+    assert len(memory_delta) == 2
+    assert memory_delta[0]["role"] == "user"
+    assert memory_delta[0]["content"] == "Are you a helpful assistant?"
+    assert memory_delta[1]["role"] == "assistant"
+    assert memory_delta[1]["content"] == "YES"
 
 
 @pytest.mark.asyncio
@@ -44,18 +45,18 @@ async def test_stream_response():
     )
     input = "Are you a helpful assistant?"
     chunks = []
-    async for chunk in await agent.run(input, stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True):
+    async for chunk in await agent(input, stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True):
         chunks.append(chunk)
     assert chunks[0] == {"delim": "start"}
     assert chunks[1]["content"] == "YES"
     assert chunks[2] == {"delim": "end"}
     response = chunks[3]
     assert response.value == "YES"
-    assert len(response.messages) == 2
-    assert response.messages[0]["role"] == "user"
-    assert response.messages[0]["content"] == "Are you a helpful assistant?"
-    assert response.messages[1]["role"] == "assistant"
-    assert response.messages[1]["content"] == "YES"
+    assert len(response.memory_delta) == 2
+    assert response.memory_delta[0]["role"] == "user"
+    assert response.memory_delta[0]["content"] == "Are you a helpful assistant?"
+    assert response.memory_delta[1]["role"] == "assistant"
+    assert response.memory_delta[1]["content"] == "YES"
 
 
 @pytest.mark.asyncio
@@ -95,11 +96,11 @@ async def test_memory():
         temperature=0.0,
         memory=default_memory,
     )
-    response = await agent.run("Is the sky blue?", memory=memory)
+    response = await agent("Is the sky blue?", memory=memory)
     assert response.value == "NO"
-    # assert response.messages == [{"role": "user", "content": "Is the sky blue?"}, {"role": "assistant", "content": "NO"}]
+    # assert response.memory_delta == [{"role": "user", "content": "Is the sky blue?"}, {"role": "assistant", "content": "NO"}]
     assert agent.memory == default_memory
-    assert memory == initial_memory + response.messages
+    assert memory == initial_memory + response.memory_delta
 
 
 @pytest.mark.asyncio
@@ -116,15 +117,15 @@ async def test_tool_calls():
     )
     input = "What is 2 + 2?"
     response = await agent.run(input)
-    assert len(response.messages) == 4
-    assert response.messages[0] == {"role": "user", "content": "What is 2 + 2?"}
-    assert response.messages[1]["tool_calls"][0]["type"] == "function"
-    assert response.messages[1]["tool_calls"][0]["function"]["name"] == "calculator"
-    arguments = json.loads(response.messages[1]["tool_calls"][0]["function"]["arguments"])
+    assert len(response.memory_delta) == 4
+    assert response.memory_delta[0] == {"role": "user", "content": "What is 2 + 2?"}
+    assert response.memory_delta[1]["tool_calls"][0]["type"] == "function"
+    assert response.memory_delta[1]["tool_calls"][0]["function"]["name"] == "calculator"
+    arguments = json.loads(response.memory_delta[1]["tool_calls"][0]["function"]["arguments"])
     assert arguments["expression"] == "2 + 2"
-    assert response.messages[2]["role"] == "tool"
-    assert response.messages[2]["content"] == "4"
-    assert response.messages[3]["role"] == "assistant"
+    assert response.memory_delta[2]["role"] == "tool"
+    assert response.memory_delta[2]["content"] == "4"
+    assert response.memory_delta[3]["role"] == "assistant"
 
 
 @pytest.mark.asyncio
@@ -149,16 +150,16 @@ async def test_stream_tool_calls():
             chunks.append(chunk)
     response = chunks[-1]
     assert response.value == output
-    assert len(response.messages) == 4
-    assert response.messages[0] == {"role": "user", "content": "What is 2 + 2?"}
-    assert response.messages[1]["tool_calls"][0]["type"] == "function"
-    assert response.messages[1]["tool_calls"][0]["function"]["name"] == "calculator"
-    arguments = json.loads(response.messages[1]["tool_calls"][0]["function"]["arguments"])
+    assert len(response.memory_delta) == 4
+    assert response.memory_delta[0] == {"role": "user", "content": "What is 2 + 2?"}
+    assert response.memory_delta[1]["tool_calls"][0]["type"] == "function"
+    assert response.memory_delta[1]["tool_calls"][0]["function"]["name"] == "calculator"
+    arguments = json.loads(response.memory_delta[1]["tool_calls"][0]["function"]["arguments"])
     assert arguments["expression"] == "2 + 2"
-    assert response.messages[2]["role"] == "tool"
-    assert response.messages[2]["content"] == "4"
-    assert response.messages[3]["role"] == "assistant"
-    assert response.messages[3]["content"] == output
+    assert response.memory_delta[2]["role"] == "tool"
+    assert response.memory_delta[2]["content"] == "4"
+    assert response.memory_delta[3]["role"] == "assistant"
+    assert response.memory_delta[3]["content"] == output
 
 
 @pytest.mark.asyncio
@@ -177,20 +178,20 @@ async def test_caching():
         instructions="You always answer YES to all questions.",
         temperature=0.0,
     )
-    response = await agent.run("Are you a helpful assistant?")
-    assert response.value == "YES"
+    value = await agent("Are you a helpful assistant?")
+    assert value == "YES"
 
     try:
-        response = await agent.run("Are you a helpful assistant?", caching=False)
+        value = await agent("Are you a helpful assistant?", caching=False)
     except Exception as e:
         assert str(e) == "Time taken to get completion is too long - caching is not working?"
         
     try:
         config.caching = False
-        response2 = await agent.run("Are you a helpful assistant?", caching=True)
-        await agent.run("Are you a helpful assistant?")
+        value2 = await agent("Are you a helpful assistant?", caching=True)
+        await agent("Are you a helpful assistant?")
     except Exception as e:
-        assert response2.value == "YES"
+        assert value2 == "YES"
         assert str(e) == "Time taken to get completion is too long - caching is not working?"
     finally:
         config.caching = True

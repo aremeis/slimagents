@@ -24,7 +24,7 @@ AgentFunction = Callable[..., Union[str, "Agent", dict, Coroutine[Any, Any, Unio
 @dataclass
 class Response():
     value: Any
-    messages: list
+    memory_delta: list
     agent: "Agent"
 
 @dataclass
@@ -72,10 +72,7 @@ class Agent:
             parallel_tool_calls: Optional[bool] = None, 
             response_format: Optional[Union[dict, type[BaseModel]]] = None,
             temperature: Optional[float] = None,
-            top_p: Optional[float] = None,
-            stop: Optional[list[str]] = None,
-            max_completion_tokens: Optional[int] = None,
-            **extra_llm_params
+            **lite_llm_args
     ):
         self._name = name or self.__class__.__name__
         self._model = model or DEFAULT_MODEL
@@ -86,10 +83,7 @@ class Agent:
         self._parallel_tool_calls = parallel_tool_calls
         self._response_format = response_format
         self._temperature = temperature
-        self._top_p = top_p
-        self._stop = stop
-        self._max_completion_tokens = max_completion_tokens
-        self._extra_llm_params = extra_llm_params
+        self._lite_llm_args = lite_llm_args
 
         # Create a logger specific to this agent instance
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}(name='{self._name}')")
@@ -184,31 +178,13 @@ class Agent:
             self._temperature = value
 
     @property
-    def top_p(self):
-        return self._top_p
-    @top_p.setter
-    def top_p(self, value):
-        if value != self._top_p:
-            self.__all_chat_completion_params = None
-            self._top_p = value
-
-    @property
-    def max_completion_tokens(self):
-        return self._max_completion_tokens
-    @max_completion_tokens.setter
-    def max_completion_tokens(self, value):
-        if value != self._max_completion_tokens:
-            self.__all_chat_completion_params = None
-            self._max_completion_tokens = value
-
-    @property
     def extra_llm_params(self):
-        return self._extra_llm_params
+        return self._lite_llm_args
     @extra_llm_params.setter
     def extra_llm_params(self, value):
-        if value != self._extra_llm_params:
+        if value != self._lite_llm_args:
             self.__all_chat_completion_params = None
-            self._extra_llm_params = value
+            self._lite_llm_args = value
 
 
     def __get_all_chat_completion_params(self):
@@ -231,13 +207,11 @@ class Agent:
             # Response format is updated, so we need to update the cached JSON response format
             self.__json_response_format = type_to_response_format(self.response_format)
         params = {}
-        if self._extra_llm_params:
-            params.update(self._extra_llm_params)
+        if self._lite_llm_args:
+            params.update(self._lite_llm_args)
         params.update({
             "model": self.model,
             "temperature": self.temperature,
-            "top_p": self.top_p,
-            "max_completion_tokens": self.max_completion_tokens,
         })
         if self.__json_tools:
             params.update({
@@ -484,7 +458,7 @@ class Agent:
         if stream_response:
             yield Response(
                     value=active_agent.get_value(memory[-1]["content"]),
-                    messages=memory_delta,
+                    memory_delta=memory_delta,
                     agent=active_agent,
                 )
 
@@ -522,6 +496,7 @@ class Agent:
             self,
             *inputs,
             memory: Optional[list[dict]] = None,
+            memory_delta: Optional[list[dict]] = None,
             stream: Optional[bool] = False,
             stream_tokens: bool = True,
             stream_delimiters: bool = False,
@@ -536,7 +511,11 @@ class Agent:
         if caching is None:
             caching = config.caching
 
-        memory_delta = []
+        if memory_delta is None:
+            memory_delta = []
+        elif memory_delta:
+            raise ValueError("memory_delta must be an empty list if provided as a parameter")
+        
         if inputs:
             memory_delta.append(self._get_user_message(inputs))
 
@@ -585,7 +564,7 @@ class Agent:
                 memory.extend(memory_delta)
                 return Response(
                     value=partial_response.result.value,
-                    messages=memory_delta,
+                    memory_delta=memory_delta,
                     agent=active_agent,
                 )
             if partial_response.agent:
@@ -597,7 +576,7 @@ class Agent:
         memory.extend(memory_delta)
         return Response(
             value=self.get_value(memory[-1]["content"]),
-            messages=memory_delta,
+            memory_delta=memory_delta,
             agent=active_agent,
         )
     
@@ -630,9 +609,42 @@ class Agent:
                 stream_response=stream_response, 
                 max_turns=max_turns, 
                 execute_tools=execute_tools, 
-                caching=caching
+                caching=caching,
             )
         )
 
+
+    async def __call__(
+            self,
+            *inputs,
+            memory: Optional[list[dict]] = None,
+            memory_delta: Optional[list[dict]] = None,
+            stream: Optional[bool] = False,
+            stream_tokens: bool = True,
+            stream_delimiters: bool = False,
+            stream_tool_calls: bool = False,
+            stream_response: bool = False,
+            max_turns: Optional[int] = float("inf"),
+            execute_tools: Optional[bool] = True,
+            caching: Optional[bool] = None,
+    ) -> Response:
+        response = await self.run(
+            *inputs,
+            memory=memory,
+            memory_delta=memory_delta,
+            stream=stream,
+            stream_tokens=stream_tokens,
+            stream_delimiters=stream_delimiters,
+            stream_tool_calls=stream_tool_calls,
+            stream_response=stream_response,
+            max_turns=max_turns,
+            execute_tools=execute_tools,
+            caching=caching,
+        )
+        if stream_response:
+            return response
+        else:
+            return response.value
+        
 
 __all__ = ["Agent", "Response", "Result"]
