@@ -2,7 +2,7 @@ import json
 import asyncio
 import logging
 
-from slimagents import logger
+from slimagents.config import logger
 
 
 async def process_and_print_streaming_response(response):

@@ -16,9 +16,7 @@ from pydantic import BaseModel
 
 # Local imports
 from .util import function_to_json, get_mime_type_from_file_like_object, merge_chunk, type_to_response_format
-
-# Configure logger
-logger = logging.getLogger(__name__)
+import slimagents.config as config
 
 # Types
 AgentFunction = Callable[..., Union[str, "Agent", dict, Coroutine[Any, Any, Union[str, "Agent", dict]]]]
@@ -95,7 +93,7 @@ class Agent:
 
         # Create a logger specific to this agent instance
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}(name='{self._name}')")
-        self.logger.setLevel(logger.level)
+        self.logger.setLevel(config.logger.level)
 
         # Cache related
         self.__tools = None
@@ -252,7 +250,7 @@ class Agent:
         return params
 
 
-    async def get_chat_completion(self, memory: list[dict], memory_delta: list[dict], stream: bool = False):
+    async def get_chat_completion(self, memory: list[dict], memory_delta: list[dict], stream: bool = False, caching: bool = False):
         if self.instructions:
             messages = [{"role": "system", "content": self.instructions}]
         else:
@@ -268,7 +266,7 @@ class Agent:
         create_params = self.__get_all_chat_completion_params().copy()
         create_params["messages"] = messages
         create_params["stream"] = stream
-
+        create_params["caching"] = caching
         return await acompletion(**create_params)
 
 
@@ -392,8 +390,13 @@ class Agent:
             self,
             memory: list[dict],
             memory_delta: list[dict],
+            stream_tokens: bool,
+            stream_delimiters: bool,
+            stream_tool_calls: bool,
+            stream_response: bool,
             max_turns: int,
             execute_tools: bool,
+            caching: bool,
     ):
         active_agent = self
 
@@ -416,18 +419,32 @@ class Agent:
             }
 
             # get completion with current history, agent
-            completion = await active_agent.get_chat_completion(memory, memory_delta, stream=True)
+            completion = await active_agent.get_chat_completion(memory, memory_delta, stream=True, caching=caching)
 
-            yield {"delim": "start"}
+            if stream_delimiters:
+                yield {"delim": "start"}
             async for chunk in completion:
                 delta = json.loads(chunk.choices[0].delta.json())
                 if delta["role"] == "assistant":
                     delta["sender"] = active_agent.name
-                yield delta
+                if "content" in delta and delta["content"]:
+                    if stream_tokens:
+                        yield delta["content"]
+                    else:
+                        yield delta
+                elif "tool_calls" in delta and delta["tool_calls"]:
+                    if stream_tool_calls:
+                        yield delta
+                else:
+                    # In theory, the check for "content" and "tool_calls" should be enough, so
+                    # this should never happen. However, LiteLLM seems to send some additional
+                    # empty chunks. We ignore them for now.
+                    pass
                 delta.pop("role", None)
                 delta.pop("sender", None)
                 merge_chunk(message, delta)
-            yield {"delim": "end"}
+            if stream_delimiters:
+                yield {"delim": "end"}
 
             message["tool_calls"] = list(
                 message.get("tool_calls", {}).values())
@@ -464,13 +481,12 @@ class Agent:
             turns += 1
 
         memory.extend(memory_delta)
-        yield {
-            "response": Response(
-                value=active_agent.get_value(memory[-1]["content"]),
-                messages=memory_delta,
-                agent=active_agent,
-            )
-        }
+        if stream_response:
+            yield Response(
+                    value=active_agent.get_value(memory[-1]["content"]),
+                    messages=memory_delta,
+                    agent=active_agent,
+                )
 
 
     def _get_user_message(self, inputs: tuple) -> dict:
@@ -507,11 +523,18 @@ class Agent:
             *inputs,
             memory: Optional[list[dict]] = None,
             stream: Optional[bool] = False,
+            stream_tokens: bool = True,
+            stream_delimiters: bool = False,
+            stream_tool_calls: bool = False,
+            stream_response: bool = False,
             max_turns: Optional[int] = float("inf"),
             execute_tools: Optional[bool] = True,
+            caching: Optional[bool] = None,
     ) -> Response:
         if memory is None:
             memory = []
+        if caching is None:
+            caching = config.caching
 
         memory_delta = []
         if inputs:
@@ -521,8 +544,13 @@ class Agent:
             return self._run_and_stream(
                 memory=memory,
                 memory_delta=memory_delta,
+                stream_tokens=stream_tokens,
+                stream_delimiters=stream_delimiters,
+                stream_tool_calls=stream_tool_calls,
+                stream_response=stream_response,
                 max_turns=max_turns,
                 execute_tools=execute_tools,
+                caching=caching,
             )
         
         active_agent = self
@@ -534,7 +562,7 @@ class Agent:
             active_agent.logger.info("Getting completion...")
             active_agent._before_chat_completion()
             # get completion with current history, agent
-            completion = await active_agent.get_chat_completion(memory, memory_delta)
+            completion = await active_agent.get_chat_completion(memory, memory_delta, caching=caching)
             message = completion.choices[0].message
             if active_agent.logger.level == logging.DEBUG:
                 active_agent.logger.debug("Received completion: %s", message)
@@ -578,8 +606,13 @@ class Agent:
             self, 
             *inputs,
             stream: bool = False, 
+            stream_tokens: bool = True,
+            stream_delimiters: bool = False,
+            stream_tool_calls: bool = False,
+            stream_response: bool = False,
             max_turns: int = float("inf"), 
-            execute_tools: bool = True
+            execute_tools: bool = True,
+            caching: bool = None,
     ) -> Response:
         try:
             loop = asyncio.get_running_loop()
@@ -587,4 +620,19 @@ class Agent:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
-        return loop.run_until_complete(self.run(*inputs, stream=stream, max_turns=max_turns, execute_tools=execute_tools))
+        return loop.run_until_complete(
+            self.run(
+                *inputs, 
+                stream=stream, 
+                stream_tokens=stream_tokens, 
+                stream_delimiters=stream_delimiters, 
+                stream_tool_calls=stream_tool_calls, 
+                stream_response=stream_response, 
+                max_turns=max_turns, 
+                execute_tools=execute_tools, 
+                caching=caching
+            )
+        )
+
+
+__all__ = ["Agent", "Response", "Result"]

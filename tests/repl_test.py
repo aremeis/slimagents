@@ -35,3 +35,9 @@ agent = Agent(
 
 
 run_demo_loop(agent)
+
+# First question:
+# Is the sky blue?
+
+# Expected response:
+# NO
