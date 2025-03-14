@@ -130,6 +130,9 @@ class Agent:
 
     @property
     def memory(self):
+        """
+        The "default" memory of the agent that will always be included for each chat completion.
+        """
         return self._memory
     @memory.setter
     def memory(self, value):
@@ -249,12 +252,17 @@ class Agent:
         return params
 
 
-    async def get_chat_completion(self, stream: bool = False):
+    async def get_chat_completion(self, memory: list[dict], memory_delta: list[dict], stream: bool = False):
         if self.instructions:
             messages = [{"role": "system", "content": self.instructions}]
         else:
             messages = []
+        # self.memory is the "default" memory that will always be included for each chat completion
         messages.extend(self.memory)
+        # Add the memory added by the user
+        messages.extend(memory)
+        # Add the memory added by the agent during the current call
+        messages.extend(memory_delta)
         self.logger.debug("Getting chat completion for: %s", messages)
 
         create_params = self.__get_all_chat_completion_params().copy()
@@ -382,14 +390,16 @@ class Agent:
 
     async def _run_and_stream(
             self,
+            memory: list[dict],
+            memory_delta: list[dict],
             max_turns: int,
             execute_tools: bool,
     ):
         active_agent = self
-        memory = self.memory
-        init_len = len(memory)
 
-        while len(memory) - init_len < max_turns:
+        turns = 0
+
+        while turns < max_turns:
             self._before_chat_completion()
             message = {
                 "content": "",
@@ -406,7 +416,7 @@ class Agent:
             }
 
             # get completion with current history, agent
-            completion = await active_agent.get_chat_completion(stream=True)
+            completion = await active_agent.get_chat_completion(memory, memory_delta, stream=True)
 
             yield {"delim": "start"}
             async for chunk in completion:
@@ -427,7 +437,7 @@ class Agent:
 
             if not message["tool_calls"] or not execute_tools:
                 active_agent.logger.debug("Ending turn.")
-                memory.append(message)
+                memory_delta.append(message)
                 break
 
             # convert tool_calls to objects
@@ -446,15 +456,18 @@ class Agent:
             partial_response = await active_agent.handle_tool_calls(tool_calls)
             if partial_response.filtered_tool_calls:
                 # Only add tool calls to memory if there are any left after filtering
-                memory.append(message)
-            memory.extend(partial_response.messages)
+                memory_delta.append(message)
+            memory_delta.extend(partial_response.messages)
             if partial_response.agent:
                 active_agent = partial_response.agent
 
+            turns += 1
+
+        memory.extend(memory_delta)
         yield {
             "response": Response(
                 value=active_agent.get_value(memory[-1]["content"]),
-                messages=memory[init_len:],
+                messages=memory_delta,
                 agent=active_agent,
             )
         }
@@ -492,29 +505,36 @@ class Agent:
     async def run(
             self,
             *inputs,
+            memory: Optional[list[dict]] = None,
             stream: Optional[bool] = False,
             max_turns: Optional[int] = float("inf"),
             execute_tools: Optional[bool] = True,
     ) -> Response:
-        memory = self.memory
+        if memory is None:
+            memory = []
+
+        memory_delta = []
         if inputs:
-            memory.append(self._get_user_message(inputs))
+            memory_delta.append(self._get_user_message(inputs))
 
         if stream:
             return self._run_and_stream(
+                memory=memory,
+                memory_delta=memory_delta,
                 max_turns=max_turns,
                 execute_tools=execute_tools,
             )
         
-        init_len = len(memory)
         active_agent = self
         self.logger.info("Starting run with prompt: %s", inputs)
 
-        while len(memory) - init_len < max_turns and active_agent:
+        turns = 0
+
+        while turns < max_turns and active_agent:
             active_agent.logger.info("Getting completion...")
             active_agent._before_chat_completion()
             # get completion with current history, agent
-            completion = await active_agent.get_chat_completion()
+            completion = await active_agent.get_chat_completion(memory, memory_delta)
             message = completion.choices[0].message
             if active_agent.logger.level == logging.DEBUG:
                 active_agent.logger.debug("Received completion: %s", message)
@@ -523,30 +543,33 @@ class Agent:
             message.sender = active_agent.name
 
             if not message.tool_calls or not execute_tools:
-                memory.append(message.model_dump())
+                memory_delta.append(message.model_dump())
                 break
 
             # handle function calls and switching agents
             partial_response = await active_agent.handle_tool_calls(message.tool_calls)
             if partial_response.filtered_tool_calls:
                 # Only add tool calls to memory if there are any left after filtering
-                memory.append(message.model_dump())
-            memory.extend(partial_response.messages)
+                memory_delta.append(message.model_dump())
+            memory_delta.extend(partial_response.messages)
             if partial_response.result:
                 active_agent.logger.debug("Final answer reached in tool call. Ending turn.")
+                memory.extend(memory_delta)
                 return Response(
                     value=partial_response.result.value,
-                    messages=memory[init_len:],
+                    messages=memory_delta,
                     agent=active_agent,
                 )
             if partial_response.agent:
                 active_agent = partial_response.agent
-                active_agent.memory = memory
+
+            turns += 1
 
         active_agent.logger.debug("Run completed")
+        memory.extend(memory_delta)
         return Response(
             value=self.get_value(memory[-1]["content"]),
-            messages=memory[init_len:],
+            messages=memory_delta,
             agent=active_agent,
         )
     

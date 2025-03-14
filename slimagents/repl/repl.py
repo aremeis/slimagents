@@ -74,9 +74,11 @@ async def run_demo_loop_async(agent, stream=False, log_level: int = None) -> Non
 
     print("Starting SlimAgents CLI 🪶")
 
+    memory = []
+
     while True:
         user_input = input("\033[90mUser\033[0m: ")
-        response = await agent.run(user_input, stream=stream)
+        response = await agent.run(user_input, stream=stream, memory=memory)
         if stream:
             response = await process_and_print_streaming_response(response)
         else:
