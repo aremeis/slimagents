@@ -1,8 +1,8 @@
 import copy
 import inspect
-from datetime import datetime
 import logging
-from typing import Union
+import re
+from typing import Any, Generic, Optional, TypeVar, get_args, get_origin
 import jsonref
 from pydantic import BaseModel
 import mimetypes
@@ -133,11 +133,56 @@ def flatten_schema(schema):
     return schema
 
 
-def type_to_response_format(type_: Union[dict, type[BaseModel]]) -> dict:
+T = TypeVar('T')
+
+class PrimitiveResult(BaseModel):
+    result: Any
+
+class IntResult(PrimitiveResult):
+    result: int
+
+class FloatResult(PrimitiveResult):
+    result: float
+
+class BoolResult(PrimitiveResult):
+    result: bool
+
+class ListResult(PrimitiveResult, Generic[T]):
+    result: list[T]
+
+TYPE_MAP = {
+    int: IntResult,
+    float: FloatResult,
+    bool: BoolResult,
+    list: ListResult,
+}
+
+
+def get_pydantic_type(t: type) -> type:
+    _t = get_origin(t) or t
+    ret = TYPE_MAP.get(_t, t)
+    if ret is ListResult:
+        t_args = get_args(t)
+        if len(t_args) == 0:
+            return ret[Any]
+        elif len(t_args) == 1:
+            return ret[t_args[0]]
+        else:
+            raise ValueError(f"Unsupported list type: {t}")
+    return ret
+
+
+JSON_MODE = {
+    "type": "json_object",
+}
+
+def type_to_response_format(type_: Optional[type]) -> dict:
     if type_ is None:
         return None
     elif isinstance(type_, dict):
         return type_
+    elif type_ is dict:
+        return JSON_MODE
     elif issubclass(type_, BaseModel):
         schema = type_.model_json_schema(mode="serialization")
         # LLMs typically don't support $defs, so we need to remove them
@@ -147,7 +192,7 @@ def type_to_response_format(type_: Union[dict, type[BaseModel]]) -> dict:
         ret = {
             "type": "json_schema",
             "json_schema": {
-                "name": type_.__name__,
+                "name": re.sub(r'[^a-zA-Z0-9-_]', '_', type_.__name__),
                 "schema": schema,
                 "strict": True,
             },

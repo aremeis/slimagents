@@ -15,7 +15,7 @@ from litellm.types.completion import ChatCompletionMessageToolCallParam, Functio
 from pydantic import BaseModel
 
 # Local imports
-from .util import function_to_json, get_mime_type_from_file_like_object, merge_chunk, type_to_response_format
+from .util import PrimitiveResult, function_to_json, get_mime_type_from_file_like_object, get_pydantic_type, merge_chunk, type_to_response_format
 import slimagents.config as config
 
 # Types
@@ -81,7 +81,7 @@ class Agent:
         self._tools = tools or []
         self._tool_choice = tool_choice
         self._parallel_tool_calls = parallel_tool_calls
-        self._response_format = response_format
+        self._response_format = get_pydantic_type(response_format)
         self._temperature = temperature
         self._lite_llm_args = lite_llm_args
 
@@ -166,7 +166,7 @@ class Agent:
         if value != self._response_format:
             self.__all_chat_completion_params = None
             self.__json_response_format = None
-            self._response_format = value
+            self._response_format = get_pydantic_type(value)
 
     @property
     def temperature(self):
@@ -263,10 +263,14 @@ class Agent:
 
     def get_value(self, content: str):
         if self.response_format:
-            if isinstance(self.response_format, dict):
+            if self.response_format is dict or isinstance(self.response_format, dict):
                 return json.loads(content)
             elif issubclass(self.response_format, BaseModel):
-                return self.response_format.model_validate_json(content)
+                ret = self.response_format.model_validate_json(content)
+                if isinstance(ret, PrimitiveResult):
+                    return ret.result
+                else:
+                    return ret
             else:
                 raise ValueError(f"Unsupported response_format: {self.response_format}")
         else:
