@@ -30,3 +30,8 @@ Upload to pypi
 ```shell
 python -m twine upload dist/*
 ```
+
+Build, tag, release and upload to pypi
+```shell
+./release.sh
+```
