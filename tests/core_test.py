@@ -12,6 +12,8 @@ import slimagents.config as config
 import litellm
 from litellm.caching.caching import Cache
 from pydantic import BaseModel
+
+from slimagents.core import Result
 # Set caching configuration
 config.caching = True
 litellm.cache = Cache(type="disk", disk_cache_dir="./tests/llm_cache")
@@ -248,3 +250,24 @@ async def test_response_format():
     assert value[1].last_name == "Smith"
     assert value[2].first_name == "Jim"
     assert value[2].last_name == "Beam"
+
+@pytest.mark.asyncio
+async def test_non_string_output():
+    def calculator(input: str) -> float:
+        ret = eval(input)
+        return Result(value=ret, exit=True)
+    memory = []
+    agent = Agent(
+        instructions="You always use the calculator tool to calculate mathematical expressions.",
+        temperature=0.0,
+        tools=[calculator],
+        memory=memory,
+    )
+    memory_delta = []
+    value = await agent("What is 2 + 2?", memory=memory, memory_delta=memory_delta)
+    assert len(memory_delta) == 3
+    assert value == 4
+    memory_delta = []
+    value = await agent("What is 3 + 3?", memory=memory, memory_delta=memory_delta)
+    assert len(memory_delta) == 3
+    assert value == 6

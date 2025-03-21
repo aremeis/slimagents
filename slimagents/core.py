@@ -290,7 +290,7 @@ class Agent:
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
                     "tool_name": tool_call["function"]["name"],
-                    "content": result.value,
+                    "content": str(result.value),
                 }
             )
         if result.agent:
@@ -562,7 +562,7 @@ class Agent:
             if partial_response.filtered_tool_calls:
                 # Only add tool calls to memory if there are any left after filtering
                 memory_delta.append(message.model_dump())
-            memory_delta.extend(partial_response.messages)
+                memory_delta.extend(partial_response.messages)
             if partial_response.result:
                 active_agent.logger.debug("Final answer reached in tool call. Ending turn.")
                 memory.extend(memory_delta)
