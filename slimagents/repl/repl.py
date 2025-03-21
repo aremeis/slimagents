@@ -2,7 +2,10 @@ import json
 import asyncio
 import logging
 
+from slimagents import Response
+
 from slimagents.config import logger
+from slimagents.core import Agent
 
 
 async def process_and_print_streaming_response(response):
@@ -10,6 +13,9 @@ async def process_and_print_streaming_response(response):
     last_sender = ""
 
     async for chunk in response:
+        if isinstance(chunk, Response):
+            return chunk
+        
         if "sender" in chunk:
             last_sender = chunk["sender"]
 
@@ -31,9 +37,6 @@ async def process_and_print_streaming_response(response):
         if "delim" in chunk and chunk["delim"] == "end" and content:
             print()  # End of response message
             content = ""
-
-        if "response" in chunk:
-            return chunk["response"]
 
 
 def pretty_print_messages(messages) -> None:
@@ -68,7 +71,7 @@ def enable_logging(log_level: int = logging.ERROR) -> None:
     logger.setLevel(log_level)
 
 
-async def run_demo_loop_async(agent, stream=False, log_level: int = None) -> None:
+async def run_demo_loop_async(agent: Agent, stream=False, log_level: int = None) -> None:
     if log_level is not None:
         enable_logging(log_level)
 
@@ -78,11 +81,11 @@ async def run_demo_loop_async(agent, stream=False, log_level: int = None) -> Non
 
     while True:
         user_input = input("\033[90mUser\033[0m: ")
-        response = await agent.run(user_input, stream=stream, memory=memory)
+        response = await agent.run(user_input, stream=stream, memory=memory, stream_response=True, stream_delimiters=True, stream_tokens=False, stream_tool_calls=True)
         if stream:
             response = await process_and_print_streaming_response(response)
         else:
-            pretty_print_messages(response.messages)
+            pretty_print_messages(response.memory_delta)
 
         agent = response.agent
 

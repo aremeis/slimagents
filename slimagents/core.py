@@ -645,7 +645,7 @@ class Agent:
             execute_tools=execute_tools,
             caching=caching,
         )
-        if stream_response:
+        if stream:
             return response
         else:
             return response.value
