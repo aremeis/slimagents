@@ -11,7 +11,7 @@ from slimagents import Agent
 import slimagents.config as config
 import litellm
 from litellm.caching.caching import Cache
-from pydantic import BaseModel
+from pydantic import AnyUrl, BaseModel
 
 from slimagents.core import Result
 # Set caching configuration
@@ -279,17 +279,64 @@ async def test_file_input():
         instructions="You extract text from a PDF file and return it in markdown format. Only return the text in the PDF, no other text or comments.",
         temperature=0.0,
     )
+
+    # url = AnyUrl("https://drive.google.com/uc?export=download&id=1cZ60GsJJRyBE-Tb56atRG_1CRv8YS5ui")
+    with open("tests/ocr_test.pdf", "rb") as f:
+        content = f.read()
+
+    # GPT-4o
+
     with open("tests/ocr_test.pdf", "rb") as f:
         value = await ocr(f)
+        assert "42" in value
+
+    value = await ocr(content)
     assert "42" in value
+
+    # Claude
 
     ocr.model = "anthropic/claude-3-5-sonnet-20240620"
     with open("tests/ocr_test.pdf", "rb") as f:
         value = await ocr(f)
+        assert "42" in value
+
+    value = await ocr(content)
     assert "42" in value
+
+    # value = await ocr(url)
+    # assert "42" in value
+
+    # Gemini
 
     ocr.model = "gemini/gemini-1.5-flash"
     with open("tests/ocr_test.pdf", "rb") as f:
-        content = f.read()
-        value = await ocr(content)
+        value = await ocr(f)
+        assert "42" in value
+
+    value = await ocr(content)
+    assert "42" in value
+
+    # value = await ocr(url)
+    # assert "42" in value
+
+
+@pytest.mark.asyncio
+async def test_image_url_input():
+    ocr = Agent(
+        model="gpt-4o",
+        instructions="You extract text from an image and return it in markdown format. Only return the text in the image, no other text or comments.",
+        temperature=0.0,
+    )
+
+    url = AnyUrl("https://drive.google.com/uc?export=download&id=1FmqV4qJ2tS6wKMygX9BIh2uiPaBZnDE4")
+
+    value = await ocr(url)
+    assert "42" in value
+
+    ocr.model = "anthropic/claude-3-5-sonnet-20240620"
+    value = await ocr(url)
+    assert "42" in value
+
+    ocr.model = "gemini/gemini-1.5-flash"
+    value = await ocr(url)
     assert "42" in value

@@ -12,7 +12,7 @@ import logging
 # Package/library imports
 from litellm import acompletion
 from litellm.types.completion import ChatCompletionMessageToolCallParam, Function
-from pydantic import BaseModel
+from pydantic import AnyUrl, BaseModel
 
 # Local imports
 from .util import PrimitiveResult, function_to_json, get_mime_type_from_content, get_mime_type_from_file_like_object, get_pydantic_type, merge_chunk, type_to_response_format
@@ -468,6 +468,9 @@ class Agent:
 
 
     def _get_user_message(self, inputs: tuple, model: str) -> dict:
+        def is_openai_model(model: str) -> bool:
+            return model.startswith("openai/") or model.find("/") == -1
+
         def user_message_part(input):
             if isinstance(input, str):
                 return {
@@ -476,6 +479,14 @@ class Agent:
                 }
             elif isinstance(input, dict):
                 return input
+            elif isinstance(input, AnyUrl):
+                # Assume image.
+                return {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": str(input),
+                    },
+                }
             else:
                 if hasattr(input, 'read'):  # is file-like object
                     file_name = input.name if input.name else None
@@ -489,7 +500,7 @@ class Agent:
                 else:
                     raise ValueError(f"Unsupported element type: {type(input)}")
                 base64_content = base64.b64encode(content).decode('utf-8')
-                if model.startswith("openai/") or model.find("/") == -1:
+                if is_openai_model(model):
                     return {
                         "type": "file",
                         "file": {
