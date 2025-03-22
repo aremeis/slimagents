@@ -15,7 +15,7 @@ from litellm.types.completion import ChatCompletionMessageToolCallParam, Functio
 from pydantic import BaseModel
 
 # Local imports
-from .util import PrimitiveResult, function_to_json, get_mime_type_from_file_like_object, get_pydantic_type, merge_chunk, type_to_response_format
+from .util import PrimitiveResult, function_to_json, get_mime_type_from_content, get_mime_type_from_file_like_object, get_pydantic_type, merge_chunk, type_to_response_format
 import slimagents.config as config
 
 # Types
@@ -467,7 +467,7 @@ class Agent:
                 )
 
 
-    def _get_user_message(self, inputs: tuple) -> dict:
+    def _get_user_message(self, inputs: tuple, model: str) -> dict:
         def user_message_part(input):
             if isinstance(input, str):
                 return {
@@ -476,18 +476,35 @@ class Agent:
                 }
             elif isinstance(input, dict):
                 return input
-            elif hasattr(input, 'read'):  # is file-like object
-                mime_type = get_mime_type_from_file_like_object(input)
-                content = input.read()
-                base64_content = base64.b64encode(content).decode('utf-8')
-                return {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{base64_content}",
-                    },
-                }
             else:
-                raise ValueError(f"Unsupported prompt element type: {type(input)}")
+                if hasattr(input, 'read'):  # is file-like object
+                    file_name = input.name if input.name else None
+                    mime_type = get_mime_type_from_file_like_object(input, file_name)
+                    file_name = file_name or "temp_file"
+                    content = input.read()
+                elif isinstance(input, bytes):
+                    file_name = "temp_file"
+                    mime_type = get_mime_type_from_content(input)
+                    content = input
+                else:
+                    raise ValueError(f"Unsupported element type: {type(input)}")
+                base64_content = base64.b64encode(content).decode('utf-8')
+                if model.startswith("openai/") or model.find("/") == -1:
+                    return {
+                        "type": "file",
+                        "file": {
+                            "filename": file_name,
+                            "file_data": f"data:{mime_type};base64,{base64_content}",
+                        },
+                    }
+                else:
+                    # While waiting for https://github.com/BerriAI/litellm/issues/9463
+                    return {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{base64_content}",
+                        },
+                    }
 
         if len(inputs) == 1 and isinstance(inputs[0], str):
             # Keep it simple if there's only one string input
@@ -521,7 +538,7 @@ class Agent:
             raise ValueError("memory_delta must be an empty list if provided as a parameter")
         
         if inputs:
-            memory_delta.append(self._get_user_message(inputs))
+            memory_delta.append(self._get_user_message(inputs, self.model))
 
         if stream:
             return self._run_and_stream(

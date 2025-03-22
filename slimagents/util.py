@@ -202,20 +202,20 @@ def type_to_response_format(type_: Optional[type]) -> dict:
         raise ValueError(f"Unsupported type for response_format: {type_}")
     
 
-def get_mime_type_from_file_like_object(file_like_object):
+def get_mime_type_from_file_like_object(file_like_object:str, filename:str = None):
     """
     Determines the MIME type of a file-like object by examining its name (if available)
     or its content as a fallback.
     
     Args:
         file_like_object: A file-like object with read and seek methods
-        
+        filename: The name of the file to get the MIME type from
     Returns:
         str: The detected MIME type of the content, or 'application/octet-stream' if detection fails
     """
     # First try to get MIME type from filename if available
-    if hasattr(file_like_object, 'name'):
-        mime_type, _ = mimetypes.guess_type(file_like_object.name)
+    if filename:
+        mime_type, _ = mimetypes.guess_type(filename)
         if mime_type:
             return mime_type
     
@@ -225,7 +225,26 @@ def get_mime_type_from_file_like_object(file_like_object):
         try:
             # Read the first 2048 bytes for MIME detection
             content = file_like_object.read(2048)
-            
+            return get_mime_type_from_content(content)
+        finally:
+            # Restore original position
+            file_like_object.seek(current_pos)
+    return 'application/octet-stream'
+
+
+def get_mime_type_from_content(content: bytes) -> str:
+    """
+    Determines the MIME type of a bytes object by examining its content.
+
+    Args:
+        content: A bytes object - usually the first 2048 bytes of a file
+
+    Returns:
+        str: The detected MIME type of the content, or 'application/octet-stream' if detection fails
+    """
+    # Try content-based detection if python-magic is available
+    if _has_magic:
+        try:
             # Create a Magic instance for MIME type detection
             mime = Magic(mime=True)
             
@@ -238,9 +257,6 @@ def get_mime_type_from_file_like_object(file_like_object):
             return mime_type
         except Exception:
             pass
-        finally:
-            # Restore original position
-            file_like_object.seek(current_pos)
             
     # If python-magic is not available or fails, return a default mime type
     return 'application/octet-stream'

@@ -271,3 +271,25 @@ async def test_non_string_output():
     value = await agent("What is 3 + 3?", memory=memory, memory_delta=memory_delta)
     assert len(memory_delta) == 3
     assert value == 6
+
+@pytest.mark.asyncio
+async def test_file_input():
+    ocr = Agent(
+        model="gpt-4o",
+        instructions="You extract text from a PDF file and return it in markdown format. Only return the text in the PDF, no other text or comments.",
+        temperature=0.0,
+    )
+    with open("tests/ocr_test.pdf", "rb") as f:
+        value = await ocr(f)
+    assert "42" in value
+
+    ocr.model = "anthropic/claude-3-5-sonnet-20240620"
+    with open("tests/ocr_test.pdf", "rb") as f:
+        value = await ocr(f)
+    assert "42" in value
+
+    ocr.model = "gemini/gemini-1.5-flash"
+    with open("tests/ocr_test.pdf", "rb") as f:
+        content = f.read()
+        value = await ocr(content)
+    assert "42" in value
