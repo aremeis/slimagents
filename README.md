@@ -52,8 +52,8 @@ agent = Agent(
 
 prompt = "How many R's are in the word 'STRAWBERRY'?"
 print(f"User: {prompt}")
-response = agent.run_sync(prompt)
-print(f"Agent: {response.value}")
+value = agent.apply(prompt)
+print(f"Agent: {value}")
 ```
 
 Result:
@@ -72,7 +72,11 @@ existing Python libraries with your agents. Use the tool's docstring to describe
 SlimAgents supports both synchronous and asynchronous tool calls. If the LLM generates several async tool calls, they will be 
 executed in parallel. 
 
-NOTE: The method `run_sync` is used in the examples in this document. In async applications, you should use the `run` method instead.
+NOTE: The method `apply` is used in the examples in this document. In async applications, you can call the `Agent` class directly:
+```python
+async def async_function():
+    value = await agent(prompt)
+```
 
 Tools can also be implemented as methods. This allows for encapsulation of the agent's settings and logic into an `Agent` subclass:
 
@@ -100,8 +104,8 @@ class WeatherAgent(Agent):
 agent = WeatherAgent()
 prompt = "What is the temperature difference between London and Paris?"
 print(f"User: {prompt}")
-response = agent.run_sync(prompt)
-print(f"Agent: {response.value}")
+value = agent.apply(prompt)
+print(f"Agent: {value}")
 ```
 
 ```
@@ -128,8 +132,8 @@ agent = Agent(
     model="gemini/gemini-1.5-pro",
 )
 
-response = agent.run_sync("Who are you?")
-print(response.value)
+value = agent.apply("Who are you?")
+print(value)
 ```
 
 ```
@@ -212,9 +216,9 @@ sales_agent = Agent(name="Sales Agent")
 def transfer_to_sales():
    return sales_agent
 
-agent = Agent(functions=[transfer_to_sales])
+agent = Agent(tools=[transfer_to_sales])
 
-response = agent.run("Transfer me to sales.")
+response = agent.run_sync("Transfer me to sales.")
 print(response.agent.name)
 ```
 
@@ -247,11 +251,12 @@ from slimagents import Agent
 
 pdf_converter = Agent(
     model="gemini/gemini-2.0-flash", # 👈 Gemini 2.0 Flash supports PDF files as input
+    instructions="Your task is to convert PDF files to Markdown"
 )
 
 with open("annual_report.pdf", "rb") as pdf_file:
-    response = pdf_converter.run_sync(pdf_file, "Convert this PDF to Markdown.")
-    print(response.value)
+    value = pdf_converter.apply(pdf_file)
+    print(value)
 ```
 
 

@@ -28,33 +28,29 @@ class Response():
     agent: "Agent"
 
 @dataclass
-class Result():
+class ToolResult():
     """
     Encapsulates the possible return values for an agent tool call.
 
     Attributes:
         value (str): The result value as a string.
         agent (Agent): The agent instance, if applicable.
-        add_to_memory (bool): Whether to add the result to the memory. Defaults to True if no agent is provided,
-                            and False if an agent is provided.
-        exit (bool): Whether to exit the current agent and return the result as the final answer. Defaults to False.
+        is_final_answer (bool): Whether to exit the current agent and return the result as the final answer. Defaults to False.
+        handoff (bool): Only used if an agent is provided. If true, the control of the conversation is transferred to the
+                       provided agent. If false, the inputs are processed by the provided agent and the result is returned
+                       as the tool call result.
     """
-
     value: str = ""
     agent: Optional["Agent"] = None
-    add_to_memory: bool = field(default_factory=lambda: True)
-    exit: bool = False
-    def __post_init__(self):
-        # Override add_to_memory default if not explicitly set and agent is present
-        if self.agent is not None and self.add_to_memory is True:
-            self.add_to_memory = False
+    is_final_answer: bool = False
+    handoff: bool = False
 
 @dataclass
 class HandleToolCallResult():
     messages: list
     agent: Optional["Agent"] = None
     filtered_tool_calls: list[ChatCompletionMessageToolCallParam] = field(default_factory=list)
-    result: Optional[Result] = None
+    result: Optional[ToolResult] = None
 
 # Agent class
 
@@ -244,17 +240,23 @@ class Agent:
         return await acompletion(**create_params)
 
 
-    async def handle_function_result(self, result) -> Result:
-        if isinstance(result, Result):
-            return result
+    async def handle_function_result(self, result, memory: list[dict], memory_delta: list[dict], caching: bool) -> ToolResult:
+        if isinstance(result, ToolResult):
+            if result.agent and not result.handoff:
+                response = await result.agent.__run(memory=memory.copy(), memory_delta=memory_delta.copy(), caching=caching)
+                result.value = response.value
+                result.agent = None
+                return result
+            else:
+                return result
         elif isinstance(result, Agent):
-            return Result(
+            return ToolResult(
                 value=json.dumps({"assistant": result.name}),
                 agent=result,
             )
         else:
             try:
-                return Result(value=str(result))
+                return ToolResult(value=str(result))
             except Exception as e:
                 error_message = "Failed to cast response to string: %s. Make sure agent functions return a string, Result object, or coroutine. Error: %s"
                 self.logger.error(error_message, result, str(e))
@@ -281,21 +283,20 @@ class Agent:
             self, 
             partial_response: HandleToolCallResult, 
             tool_call: ChatCompletionMessageToolCallParam, 
-            result: Result
+            result: ToolResult
     ) -> None:
-        if result.add_to_memory:
-            partial_response.filtered_tool_calls.append(tool_call)
-            partial_response.messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "tool_name": tool_call["function"]["name"],
-                    "content": str(result.value),
-                }
-            )
+        partial_response.filtered_tool_calls.append(tool_call)
+        partial_response.messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "tool_name": tool_call["function"]["name"],
+                "content": str(result.value),
+            }
+        )
         if result.agent:
             partial_response.agent = result.agent
-        if result.exit:
+        if result.is_final_answer:
             partial_response.result = result
 
 
@@ -305,6 +306,9 @@ class Agent:
     async def handle_tool_calls(
             self,
             tool_calls: list[ChatCompletionMessageToolCallParam],
+            memory: list[dict],
+            memory_delta: list[dict],
+            caching: bool,
     ) -> HandleToolCallResult:
         function_map = {f.__name__: f for f in self.tools}
         partial_response = HandleToolCallResult(messages=[], agent=None, filtered_tool_calls=[])
@@ -315,7 +319,7 @@ class Agent:
             name = function["name"]
             if name not in function_map:
                 self.logger.warning("Tool %s not found in function map.", name)
-                self.update_partial_response(partial_response, tool_call, Result(value=f"Error: Tool {name} not found."))
+                self.update_partial_response(partial_response, tool_call, ToolResult(value=f"Error: Tool {name} not found."))
                 continue            
             
             args = json.loads(function["arguments"])
@@ -345,7 +349,7 @@ class Agent:
                 else:
                     self.logger.info("Tool call %s returned successfully", name)
                 # Handle synchronous results immediately
-                result = await self.handle_function_result(raw_result)
+                result = await self.handle_function_result(raw_result, memory, memory_delta, caching)
                 self.update_partial_response(partial_response, tool_call, result)
                 if partial_response.result:
                     break
@@ -354,7 +358,7 @@ class Agent:
         if async_tasks:
             raw_results = await asyncio.gather(*(task[1] for task in async_tasks))
             for (tool_call, _), raw_result in zip(async_tasks, raw_results):
-                result = await self.handle_function_result(raw_result)
+                result = await self.handle_function_result(raw_result, memory, memory_delta, caching)
                 self.update_partial_response(partial_response, tool_call, result)
                 if partial_response.result:
                     break
@@ -377,7 +381,6 @@ class Agent:
             caching: bool,
     ):
         active_agent = self
-
         turns = 0
 
         while turns < max_turns:
@@ -448,7 +451,7 @@ class Agent:
                 tool_calls.append(tool_call_object)
 
             # handle function calls and switching agents
-            partial_response = await active_agent.handle_tool_calls(tool_calls)
+            partial_response = await active_agent.handle_tool_calls(tool_calls, memory, memory_delta, caching)
             if partial_response.filtered_tool_calls:
                 # Only add tool calls to memory if there are any left after filtering
                 memory_delta.append(message)
@@ -564,9 +567,25 @@ class Agent:
                 caching=caching,
             )
         
-        active_agent = self
         self.logger.info("Starting run with prompt: %s", inputs)
 
+        return await self.__run(
+            memory=memory,
+            memory_delta=memory_delta,
+            max_turns=max_turns,
+            execute_tools=execute_tools,
+            caching=caching,
+        )
+
+    async def __run(
+            self,
+            memory: Optional[list[dict]] = None,
+            memory_delta: Optional[list[dict]] = None,
+            max_turns: Optional[int] = float("inf"),
+            execute_tools: Optional[bool] = True,
+            caching: Optional[bool] = None,
+    ) -> Response:
+        active_agent = self
         turns = 0
 
         while turns < max_turns and active_agent:
@@ -586,7 +605,7 @@ class Agent:
                 break
 
             # handle function calls and switching agents
-            partial_response = await active_agent.handle_tool_calls(message.tool_calls)
+            partial_response = await active_agent.handle_tool_calls(message.tool_calls, memory, memory_delta, caching)
             if partial_response.filtered_tool_calls:
                 # Only add tool calls to memory if there are any left after filtering
                 memory_delta.append(message.model_dump())
@@ -616,6 +635,8 @@ class Agent:
     def run_sync(
             self, 
             *inputs,
+            memory: Optional[list[dict]] = None,
+            memory_delta: Optional[list[dict]] = None,
             stream: bool = False, 
             stream_tokens: bool = True,
             stream_delimiters: bool = False,
@@ -634,6 +655,8 @@ class Agent:
         return loop.run_until_complete(
             self.run(
                 *inputs, 
+                memory=memory,
+                memory_delta=memory_delta,
                 stream=stream, 
                 stream_tokens=stream_tokens, 
                 stream_delimiters=stream_delimiters, 
@@ -645,6 +668,42 @@ class Agent:
             )
         )
 
+
+    def apply(
+            self, 
+            *inputs,
+            memory: Optional[list[dict]] = None,
+            memory_delta: Optional[list[dict]] = None,
+            stream: bool = False, 
+            stream_tokens: bool = True,
+            stream_delimiters: bool = False,
+            stream_tool_calls: bool = False,
+            stream_response: bool = False,
+            max_turns: int = float("inf"), 
+            execute_tools: bool = True,
+            caching: bool = None,
+    ) -> Response:
+        """
+        Synchronously apply the agent to the inputs and return the response value.
+        """
+        response = self.run_sync(
+            *inputs,
+            memory=memory,
+            memory_delta=memory_delta,
+            stream=stream,
+            stream_tokens=stream_tokens,
+            stream_delimiters=stream_delimiters,
+            stream_tool_calls=stream_tool_calls,
+            stream_response=stream_response,
+            max_turns=max_turns,
+            execute_tools=execute_tools,
+            caching=caching,
+        )
+        if stream:
+            return response
+        else:
+            return response.value
+        
 
     async def __call__(
             self,
@@ -660,6 +719,9 @@ class Agent:
             execute_tools: Optional[bool] = True,
             caching: Optional[bool] = None,
     ) -> Response:
+        """
+        Asynchronously apply the agent to the inputs and return the response value.
+        """
         response = await self.run(
             *inputs,
             memory=memory,
@@ -679,4 +741,4 @@ class Agent:
             return response.value
         
 
-__all__ = ["Agent", "Response", "Result"]
+__all__ = ["Agent", "Response", "ToolResult"]

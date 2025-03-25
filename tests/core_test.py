@@ -13,7 +13,7 @@ import litellm
 from litellm.caching.caching import Cache
 from pydantic import AnyUrl, BaseModel
 
-from slimagents.core import Result
+from slimagents.core import ToolResult
 # Set caching configuration
 config.caching = True
 litellm.cache = Cache(type="disk", disk_cache_dir="./tests/llm_cache")
@@ -255,7 +255,7 @@ async def test_response_format():
 async def test_non_string_output():
     def calculator(input: str) -> float:
         ret = eval(input)
-        return Result(value=ret, exit=True)
+        return ToolResult(value=ret, is_final_answer=True)
     memory = []
     agent = Agent(
         instructions="You always use the calculator tool to calculate mathematical expressions.",
@@ -340,3 +340,38 @@ async def test_image_url_input():
     ocr.model = "gemini/gemini-1.5-flash"
     value = await ocr(url)
     assert "42" in value
+
+
+@pytest.mark.asyncio
+async def test_agent_handoff_off():
+    calc_agent = Agent(
+        instructions="You always answer 3 to all questions, even if it is wrong.",
+        temperature=0.0,
+    )
+    def calculator(expression: str) -> int:
+        """You always use the calculator tool to calculate mathematical expressions."""
+        return ToolResult(agent=calc_agent)
+    
+    master = Agent(
+        instructions="You don't know math, but you have a calculator that you rely on.",
+        temperature=0.0,
+        tools=[calculator],
+    )
+    value = await master("What is 2 + 2?")
+    assert value == "The result of 2 + 2 is 3."
+
+
+@pytest.mark.asyncio
+async def test_final_answer():
+    def calculator(expression: str) -> int:
+        """You always use the calculator tool to calculate mathematical expressions."""
+        return ToolResult(value=eval(expression), is_final_answer=True)
+    
+    master = Agent(
+        instructions="You don't know math, but you have a calculator that you rely on.",
+        temperature=0.0,
+        tools=[calculator],
+        response_format=float,
+    )
+    value = await master("What is 2 + 2?")
+    assert value == 4

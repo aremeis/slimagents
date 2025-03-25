@@ -1,4 +1,4 @@
-from .core import Agent, Response, Result
+from .core import Agent, Response, ToolResult
 from .repl import run_demo_loop, run_demo_loop_async
 from importlib.metadata import version
 from .config import logger
@@ -10,4 +10,4 @@ except Exception:
     
 logger.name = __name__
 
-__all__ = ["Agent", "Response", "Result", "run_demo_loop", "run_demo_loop_async", "logger"]
+__all__ = ["Agent", "Response", "ToolResult", "run_demo_loop", "run_demo_loop_async", "logger"]
