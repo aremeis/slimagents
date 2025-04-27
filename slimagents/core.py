@@ -471,9 +471,6 @@ class Agent:
 
 
     def _get_user_message(self, inputs: tuple, model: str) -> dict:
-        def is_openai_model(model: str) -> bool:
-            return model.startswith("openai/") or model.find("/") == -1
-
         def user_message_part(input):
             if isinstance(input, str):
                 return {
@@ -503,22 +500,13 @@ class Agent:
                 else:
                     raise ValueError(f"Unsupported element type: {type(input)}")
                 base64_content = base64.b64encode(content).decode('utf-8')
-                if is_openai_model(model):
-                    return {
-                        "type": "file",
-                        "file": {
-                            "filename": file_name,
-                            "file_data": f"data:{mime_type};base64,{base64_content}",
-                        },
-                    }
-                else:
-                    # While waiting for https://github.com/BerriAI/litellm/issues/9463
-                    return {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{base64_content}",
-                        },
-                    }
+                return {
+                    "type": "file",
+                    "file": {
+                        "filename": file_name,
+                        "file_data": f"data:{mime_type};base64,{base64_content}",
+                    },
+                }
 
         if len(inputs) == 1 and isinstance(inputs[0], str):
             # Keep it simple if there's only one string input

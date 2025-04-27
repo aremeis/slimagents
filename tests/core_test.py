@@ -32,6 +32,17 @@ def calculator(expression: str) -> int:
     return eval(expression)
 
 
+
+def init_vertex_ai():
+    # Vertex AI requires authentication. Run the following commands to authenticate:
+    # gcloud auth login
+    # gcloud auth application-default login
+    import os
+    import dotenv
+    dotenv.load_dotenv()
+    from google.cloud import aiplatform
+    aiplatform.init(project=os.getenv("GCP_PROJECT_ID"), location=os.getenv("GCP_LOCATION"))
+
 @pytest.mark.asyncio
 async def test_agent_init():
     agent = Agent(
@@ -305,6 +316,17 @@ async def test_file_input():
 
     # value = await ocr(url)
     # assert "42" in value
+
+    # Vertex AI
+
+    init_vertex_ai()
+    ocr.model = "vertex_ai/gemini-1.5-flash"
+    with open("tests/ocr_test.pdf", "rb") as f:
+        value = await ocr(f)
+        assert "42" in value
+
+    value = await ocr(content)
+    assert "42" in value
 
     # Gemini
 
