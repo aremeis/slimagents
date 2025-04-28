@@ -54,7 +54,7 @@ class HandleToolCallResult():
 
 # Agent class
 
-DEFAULT_MODEL = "gpt-4o"
+DEFAULT_MODEL = "gpt-4.1"
 
 class Agent:
     def __init__(

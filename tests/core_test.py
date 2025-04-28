@@ -46,7 +46,7 @@ def init_vertex_ai():
 @pytest.mark.asyncio
 async def test_agent_init():
     agent = Agent(
-        instructions="You always answer YES to all questions.",
+        instructions="You always answer 'YES' (verbatim) to all questions.",
         temperature=0.0,
     )
     memory_delta = []
@@ -62,7 +62,7 @@ async def test_agent_init():
 @pytest.mark.asyncio
 async def test_stream_response():
     agent = Agent(
-        instructions="You always answer YES to all questions.",
+        instructions="You always answer 'YES' (verbatim) to all questions.",
         temperature=0.0,
     )
     input = "Are you a helpful assistant?"
@@ -192,7 +192,7 @@ async def test_caching():
             return res
         
     agent = CachingAgent(
-        instructions="You always answer YES to all questions.",
+        instructions="You always answer 'YES' (verbatim) to all questions.",
         temperature=0.0,
     )
     value = await agent("Are you a helpful assistant?")
@@ -244,8 +244,10 @@ async def test_response_format():
     agent.response_format = dict
     value = await agent("A man called John Doe lives in New York")
     assert value == {
-        "Person": "John Doe",
-        "Location": "New York",
+        "entities": [
+            {"text": "John Doe", "type": "Person"},
+            {"text": "New York", "type": "Location"}
+        ]
     }
 
     class Person(BaseModel):
@@ -380,7 +382,7 @@ async def test_agent_handoff_off():
         tools=[calculator],
     )
     value = await master("What is 2 + 2?")
-    assert value == "The result of 2 + 2 is 3."
+    assert value == "2 + 2 is 3."
 
 
 @pytest.mark.asyncio
