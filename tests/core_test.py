@@ -183,9 +183,9 @@ async def test_stream_tool_calls():
 @pytest.mark.skip(reason="Skip to avoid token cost")
 async def test_caching():
     class CachingAgent(Agent):
-        async def get_chat_completion(self, *args, **kwargs):
+        async def _get_chat_completion(self, *args, **kwargs):
             t0 = time()
-            res = await super().get_chat_completion(*args, **kwargs)
+            res = await super()._get_chat_completion(*args, **kwargs)
             t1 = time()
             if t1 - t0 > 0.100:
                 raise Exception("Time taken to get completion is too long - caching is not working?")

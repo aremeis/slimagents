@@ -183,10 +183,10 @@ class Agent:
             self._temperature = value
 
     @property
-    def extra_llm_params(self):
+    def lite_llm_args(self):
         return self._lite_llm_args
-    @extra_llm_params.setter
-    def extra_llm_params(self, value):
+    @lite_llm_args.setter
+    def lite_llm_args(self, value):
         if value != self._lite_llm_args:
             self.__all_chat_completion_params = None
             self._lite_llm_args = value
@@ -229,7 +229,7 @@ class Agent:
         return params
 
 
-    async def get_chat_completion(self, turns: int, memory: list[dict], memory_delta: list[dict], stream: bool = False, caching: bool = False):
+    async def _get_chat_completion(self, turns: int, memory: list[dict], memory_delta: list[dict], stream: bool = False, caching: bool = False):
         if self.instructions:
             messages = [{"role": "system", "content": self.instructions}]
         else:
@@ -252,10 +252,10 @@ class Agent:
         return await acompletion(**create_params)
 
 
-    async def handle_function_result(self, result, memory: list[dict], memory_delta: list[dict], caching: bool) -> ToolResult:
+    async def _handle_function_result(self, result, memory: list[dict], memory_delta: list[dict], caching: bool) -> ToolResult:
         if isinstance(result, ToolResult):
             if result.agent and not result.handoff:
-                response = await result.agent.__run(memory=memory.copy(), memory_delta=memory_delta.copy(), caching=caching)
+                response = await result.agent._run(memory=memory.copy(), memory_delta=memory_delta.copy(), caching=caching)
                 result.value = response.value
                 result.agent = None
                 return result
@@ -275,7 +275,7 @@ class Agent:
                 raise TypeError(error_message % (result, str(e)))
             
 
-    def get_value(self, content: str):
+    def _get_value(self, content: str):
         if self.response_format:
             if self.response_format is dict or isinstance(self.response_format, dict):
                 return json.loads(content)
@@ -291,7 +291,7 @@ class Agent:
             return content
 
 
-    def update_partial_response(
+    def _update_partial_response(
             self, 
             partial_response: HandleToolCallResult, 
             tool_call: ChatCompletionMessageToolCallParam, 
@@ -315,7 +315,7 @@ class Agent:
     def _before_chat_completion(self) -> None:
         pass
 
-    async def handle_tool_calls(
+    async def _handle_tool_calls(
             self,
             turn: int,
             tool_calls: list[ChatCompletionMessageToolCallParam],
@@ -332,7 +332,7 @@ class Agent:
             name = function["name"]
             if name not in function_map:
                 self.logger.warning("Turn %d: Tool %s not found in function map.", turn, name)
-                self.update_partial_response(partial_response, tool_call, ToolResult(value=f"Error: Tool {name} not found."))
+                self._update_partial_response(partial_response, tool_call, ToolResult(value=f"Error: Tool {name} not found."))
                 continue            
             
             args = json.loads(function["arguments"])
@@ -365,8 +365,8 @@ class Agent:
                     self.logger.debug("Turn %d: (After %.2f s) Tool call %s returned %s", turn, delta_t, name, raw_result)
                 else:
                     self.logger.info("Turn %d: (After %.2f s) Tool call %s returned successfully", turn, delta_t, name)
-                result = await self.handle_function_result(raw_result, memory, memory_delta, caching)
-                self.update_partial_response(partial_response, tool_call, result)
+                result = await self._handle_function_result(raw_result, memory, memory_delta, caching)
+                self._update_partial_response(partial_response, tool_call, result)
                 if partial_response.result:
                     break
 
@@ -375,8 +375,8 @@ class Agent:
             self.logger.info("Turn %d: Processing %d async tool call(s)", turn, len(async_tasks))
             raw_results = await asyncio.gather(*(task[1] for task in async_tasks))
             for (tool_call, _), raw_result in zip(async_tasks, raw_results):
-                result = await self.handle_function_result(raw_result, memory, memory_delta, caching)
-                self.update_partial_response(partial_response, tool_call, result)
+                result = await self._handle_function_result(raw_result, memory, memory_delta, caching)
+                self._update_partial_response(partial_response, tool_call, result)
                 if partial_response.result:
                     break
 
@@ -385,7 +385,6 @@ class Agent:
         return partial_response
 
 
-    
     def _handle_partial_response(self, turns: int, t0_run: float, partial_response: HandleToolCallResult, message: dict, memory: list[dict], memory_delta: list[dict]) -> Optional[Response]:
         if partial_response.filtered_tool_calls:
             # Only add tool calls to memory if there are any left after filtering
@@ -405,9 +404,9 @@ class Agent:
             )
         
 
-    def get_response(self, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict]):
+    def _get_response(self, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict]):
         memory.extend(memory_delta)
-        value = self.get_value(memory[-1]["content"])
+        value = self._get_value(memory[-1]["content"])
         t_run_delta = time.time() - t0_run
         if self.logger.getEffectiveLevel() <= logging.DEBUG:
             self.logger.debug("Turn %d: (After %.2f s) Run completed with value %s", turns, t_run_delta, value)
@@ -418,113 +417,6 @@ class Agent:
             memory_delta=memory_delta,
             agent=self,
         )
-
-
-    async def __run_and_stream(
-            self,
-            memory: list[dict],
-            memory_delta: list[dict],
-            stream_tokens: bool,
-            stream_delimiters: bool,
-            stream_tool_calls: bool,
-            stream_response: bool,
-            max_turns: int,
-            execute_tools: bool,
-            caching: bool,
-    ):
-        t0_run = time.time()
-        active_agent = self
-        turns = 0
-
-        while turns < max_turns:
-            self._before_chat_completion()
-            message = {
-                "content": "",
-                "sender": active_agent.name,
-                "role": "assistant",
-                "function_call": None,
-                "tool_calls": defaultdict(
-                    lambda: {
-                        "function": {"arguments": "", "name": ""},
-                        "id": "",
-                        "type": "",
-                    }
-                ),
-            }
-
-            t0 = time.time()
-            # get completion with current history, agent
-            completion = await active_agent.get_chat_completion(turns, memory, memory_delta, stream=True, caching=caching)
-
-            if stream_delimiters:
-                yield {"delim": "start"}
-            async for chunk in completion:
-                delta = json.loads(chunk.choices[0].delta.json())
-                self.logger.debug("Turn %d: Received delta: %s", turns, delta)
-                if delta["role"] == "assistant":
-                    delta["sender"] = active_agent.name
-                if "content" in delta and delta["content"]:
-                    if stream_tokens:
-                        yield delta["content"]
-                    else:
-                        yield delta
-                elif "tool_calls" in delta and delta["tool_calls"]:
-                    if stream_tool_calls:
-                        yield delta
-                else:
-                    # In theory, the check for "content" and "tool_calls" should be enough, so
-                    # this should never happen. However, LiteLLM seems to send some additional
-                    # empty chunks. We ignore them for now.
-                    pass
-                delta.pop("role", None)
-                delta.pop("sender", None)
-                merge_chunk(message, delta)
-            if stream_delimiters:
-                yield {"delim": "end"}
-
-            message["tool_calls"] = list(
-                message.get("tool_calls", {}).values())
-            if not message["tool_calls"]:
-                message["tool_calls"] = None
-
-            active_agent._log_completion(turns, t0, message)
-
-            if not message["tool_calls"] or not execute_tools:
-                active_agent.logger.debug("Turn %d: Ending turn.", turns)
-                memory_delta.append(message)
-                break
-
-            # convert tool_calls from dict to objects
-            tool_calls = []
-            for tool_call in message["tool_calls"]:
-                function = Function(
-                    arguments=tool_call["function"]["arguments"],
-                    name=tool_call["function"]["name"],
-                )
-                tool_call_object = ChatCompletionMessageToolCallParam(
-                    id=tool_call["id"], function=function, type=tool_call["type"]
-                )
-                tool_calls.append(tool_call_object)
-
-            # handle function calls and switching agents
-            partial_response = await active_agent.handle_tool_calls(turns, tool_calls, memory, memory_delta, caching)
-            response = active_agent._handle_partial_response(turns, t0_run, partial_response, message, memory, memory_delta)
-            if response:
-                if stream_response:
-                    yield response
-                else:
-                    return
-
-            if partial_response.agent:
-                active_agent = partial_response.agent
-            
-            turns += 1
-
-        memory.extend(memory_delta)
-        if stream_response:
-            yield active_agent.get_response(turns, t0_run, memory, memory_delta)
-        else:
-            active_agent.logger.info("Turn %d: (After %.2f s) Run completed", turns, time.time() - t0_run)
 
 
     def _get_user_message(self, inputs: tuple, model: str) -> dict:
@@ -582,8 +474,156 @@ class Agent:
             elif message["tool_calls"]:
                 self.logger.info("Turn %d: (After %.2f s) Received completion with tool calls.", turns, delta_t)
             elif message["content"]:
-                self.logger.info("Turn %d: (After %.2f s) Received completion with text content.", turns, delta_t)        
+                self.logger.info("Turn %d: (After %.2f s) Received completion with text content.", turns, delta_t)
 
+
+    async def _run_and_stream(
+            self,
+            memory: list[dict],
+            memory_delta: list[dict],
+            stream_tokens: bool,
+            stream_delimiters: bool,
+            stream_tool_calls: bool,
+            stream_response: bool,
+            max_turns: int,
+            execute_tools: bool,
+            caching: bool,
+    ):
+        t0_run = time.time()
+        active_agent = self
+        turns = 0
+
+        while turns < max_turns:
+            self._before_chat_completion()
+            message = {
+                "content": "",
+                "sender": active_agent.name,
+                "role": "assistant",
+                "function_call": None,
+                "tool_calls": defaultdict(
+                    lambda: {
+                        "function": {"arguments": "", "name": ""},
+                        "id": "",
+                        "type": "",
+                    }
+                ),
+            }
+
+            t0 = time.time()
+            # get completion with current history, agent
+            completion = await active_agent._get_chat_completion(turns, memory, memory_delta, stream=True, caching=caching)
+
+            if stream_delimiters:
+                yield {"delim": "start"}
+            async for chunk in completion:
+                delta = json.loads(chunk.choices[0].delta.json())
+                self.logger.debug("Turn %d: Received delta: %s", turns, delta)
+                if delta["role"] == "assistant":
+                    delta["sender"] = active_agent.name
+                if "content" in delta and delta["content"]:
+                    if stream_tokens:
+                        yield delta["content"]
+                    else:
+                        yield delta
+                elif "tool_calls" in delta and delta["tool_calls"]:
+                    if stream_tool_calls:
+                        yield delta
+                else:
+                    # In theory, the check for "content" and "tool_calls" should be enough, so
+                    # this should never happen. However, LiteLLM seems to send some additional
+                    # empty chunks. We ignore them for now.
+                    pass
+                delta.pop("role", None)
+                delta.pop("sender", None)
+                merge_chunk(message, delta)
+            if stream_delimiters:
+                yield {"delim": "end"}
+
+            message["tool_calls"] = list(
+                message.get("tool_calls", {}).values())
+            if not message["tool_calls"]:
+                message["tool_calls"] = None
+
+            active_agent._log_completion(turns, t0, message)
+
+            if not message["tool_calls"] or not execute_tools:
+                active_agent.logger.debug("Turn %d: Ending turn.", turns)
+                memory_delta.append(message)
+                break
+
+            # convert tool_calls from dict to objects
+            tool_calls = []
+            for tool_call in message["tool_calls"]:
+                function = Function(
+                    arguments=tool_call["function"]["arguments"],
+                    name=tool_call["function"]["name"],
+                )
+                tool_call_object = ChatCompletionMessageToolCallParam(
+                    id=tool_call["id"], function=function, type=tool_call["type"]
+                )
+                tool_calls.append(tool_call_object)
+
+            # handle function calls and switching agents
+            partial_response = await active_agent._handle_tool_calls(turns, tool_calls, memory, memory_delta, caching)
+            response = active_agent._handle_partial_response(turns, t0_run, partial_response, message, memory, memory_delta)
+            if response:
+                if stream_response:
+                    yield response
+                else:
+                    return
+
+            if partial_response.agent:
+                active_agent = partial_response.agent
+            
+            turns += 1
+
+        memory.extend(memory_delta)
+        if stream_response:
+            yield active_agent._get_response(turns, t0_run, memory, memory_delta)
+        else:
+            active_agent.logger.info("Turn %d: (After %.2f s) Run completed", turns, time.time() - t0_run)
+
+
+    async def _run(
+            self,
+            memory: Optional[list[dict]] = None,
+            memory_delta: Optional[list[dict]] = None,
+            max_turns: Optional[int] = float("inf"),
+            execute_tools: Optional[bool] = True,
+            caching: Optional[bool] = None,
+    ) -> Response:
+        t0_run = time.time()
+        active_agent = self
+        turns = 0
+
+        while turns < max_turns and active_agent:
+            active_agent._before_chat_completion()
+            # get completion with current history, agent
+            t0 = time.time()
+            completion = await active_agent._get_chat_completion(turns, memory, memory_delta, caching=caching)
+            message = completion.choices[0].message.model_dump()
+            message["sender"] = active_agent.name
+
+            active_agent._log_completion(turns, t0, message)
+
+            if not message["tool_calls"] or not execute_tools:
+                memory_delta.append(message)
+                break
+
+            # handle function calls and switching agents
+            partial_response = await active_agent._handle_tool_calls(turns, message["tool_calls"], memory, memory_delta, caching)
+            response = active_agent._handle_partial_response(turns, t0_run, partial_response, message, memory, memory_delta)
+            if response:
+                return response
+            
+            if partial_response.agent:
+                active_agent = partial_response.agent
+
+            turns += 1
+
+        return active_agent._get_response(turns, t0_run, memory, memory_delta)
+
+    
     async def run(
             self,
             *inputs,
@@ -617,7 +657,7 @@ class Agent:
             self.logger.info("Starting run with %d input(s)", len(inputs))
 
         if stream:
-            return self.__run_and_stream(
+            return self._run_and_stream(
                 memory=memory,
                 memory_delta=memory_delta,
                 stream_tokens=stream_tokens,
@@ -629,7 +669,7 @@ class Agent:
                 caching=caching,
             )
         
-        return await self.__run(
+        return await self._run(
             memory=memory,
             memory_delta=memory_delta,
             max_turns=max_turns,
@@ -637,46 +677,7 @@ class Agent:
             caching=caching,
         )
 
-    async def __run(
-            self,
-            memory: Optional[list[dict]] = None,
-            memory_delta: Optional[list[dict]] = None,
-            max_turns: Optional[int] = float("inf"),
-            execute_tools: Optional[bool] = True,
-            caching: Optional[bool] = None,
-    ) -> Response:
-        t0_run = time.time()
-        active_agent = self
-        turns = 0
 
-        while turns < max_turns and active_agent:
-            active_agent._before_chat_completion()
-            # get completion with current history, agent
-            t0 = time.time()
-            completion = await active_agent.get_chat_completion(turns, memory, memory_delta, caching=caching)
-            message = completion.choices[0].message.model_dump()
-            message["sender"] = active_agent.name
-
-            active_agent._log_completion(turns, t0, message)
-
-            if not message["tool_calls"] or not execute_tools:
-                memory_delta.append(message)
-                break
-
-            # handle function calls and switching agents
-            partial_response = await active_agent.handle_tool_calls(turns, message["tool_calls"], memory, memory_delta, caching)
-            response = active_agent._handle_partial_response(turns, t0_run, partial_response, message, memory, memory_delta)
-            if response:
-                return response
-            
-            if partial_response.agent:
-                active_agent = partial_response.agent
-
-            turns += 1
-
-        return active_agent.get_response(turns, t0_run, memory, memory_delta)
-
-    
     def run_sync(
             self, 
             *inputs,
