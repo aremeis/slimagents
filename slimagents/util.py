@@ -1,13 +1,11 @@
 import copy
 import inspect
-import logging
 import re
 from typing import Any, Generic, Optional, TypeVar, get_args, get_origin
 import jsonref
 from pydantic import BaseModel
 import mimetypes
-
-logger = logging.getLogger(__name__)
+from slimagents.config import logger
 
 _has_magic = False
 try:
