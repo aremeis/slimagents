@@ -340,9 +340,9 @@ class Agent:
             func = function_map[name]
             
             if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                self.logger.debug("Turn %d: Processing tool call: %s with arguments %s", turn, name, args)
+                self.logger.debug("Turn %d: Processing tool call '%s' with arguments %s", turn, name, args)
             else:
-                self.logger.info("Turn %d: Processing tool call: %s", turn, name)
+                self.logger.info("Turn %d: Processing tool call '%s'", turn, name)
             t0 = time.time()
             raw_result = func(**args)
             delta_t = time.time() - t0
@@ -354,17 +354,17 @@ class Agent:
                     ret = await raw_result
                     delta_t = time.time() - t0
                     if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                        self.logger.debug("Turn %d: (After %.2f s) Async tool call %s returned %s", turn, delta_t, name, ret)
+                        self.logger.debug("Turn %d: (After %.2f s) Async tool call '%s' returned %s", turn, delta_t, name, ret)
                     else:
-                        self.logger.info("Turn %d: (After %.2f s) Async tool call %s returned successfully", turn, delta_t, name)
+                        self.logger.info("Turn %d: (After %.2f s) Async tool call '%s' returned successfully", turn, delta_t, name)
                     return ret
                 async_tasks.append((tool_call, tool_call_wrapper(raw_result)))
             else:
                 # Handle synchronous results immediately
                 if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                    self.logger.debug("Turn %d: (After %.2f s) Tool call %s returned %s", turn, delta_t, name, raw_result)
+                    self.logger.debug("Turn %d: (After %.2f s) Tool call '%s' returned %s", turn, delta_t, name, raw_result)
                 else:
-                    self.logger.info("Turn %d: (After %.2f s) Tool call %s returned successfully", turn, delta_t, name)
+                    self.logger.info("Turn %d: (After %.2f s) Tool call '%s' returned successfully", turn, delta_t, name)
                 result = await self._handle_function_result(raw_result, memory, memory_delta, caching)
                 self._update_partial_response(partial_response, tool_call, result)
                 if partial_response.result:

@@ -28,18 +28,21 @@ litellm.cache = Cache(type="disk", disk_cache_dir="./tests/llm_cache")
 load_dotenv()
 
 
-def normalize_log_timings(log: str) -> str:
+def normalize_log(log: str) -> str:
     """
-    Replace timing values like '0.02 s' with 'XX.XX s' in the log string.
+    Normalize the log string to make it deterministic:
+    - Replace timing values like '0.02 s' with 'XX.XX s' in the log string.
+    - Replace identifiers like 'call_mhXhliSQajYldexxoLeo0jXc' with 'call_XXXX'.
     """
-    return re.sub(r'([0-9]+\.[0-9]{2}) s', 'XX.XX s', log)
-
+    log = re.sub(r'([0-9]+\.[0-9]{2}) s', 'XX.XX s', log)
+    log = re.sub(r"'call_[a-zA-Z0-9]+'", "'call_XXXX'", log)
+    return log
 
 @contextmanager
 def capture_logs(logger_name='slimagents', level=logging.INFO, fmt='%(levelname)s | %(name)s | %(message)s', normalize=True):
     class LogBuffer(io.StringIO):
         def getvalue(self):
-            return normalize_log_timings(super().getvalue()) if normalize else super().getvalue()
+            return normalize_log(super().getvalue()) if normalize else super().getvalue()
     log_buffer = LogBuffer()
     handler = logging.StreamHandler(log_buffer)
     handler.setFormatter(logging.Formatter(fmt))
@@ -458,9 +461,39 @@ async def test_log_info():
         INFO | slimagents.Agent | Starting run with 1 input(s)
         INFO | slimagents.Agent | Turn 0: Getting chat completion for 2 messages
         INFO | slimagents.Agent | Turn 0: (After XX.XX s) Received completion with tool calls.
-        INFO | slimagents.Agent | Turn 0: Processing tool call: calculator
-        INFO | slimagents.Agent | Turn 0: (After XX.XX s) Tool call calculator returned successfully
+        INFO | slimagents.Agent | Turn 0: Processing tool call 'calculator'
+        INFO | slimagents.Agent | Turn 0: (After XX.XX s) Tool call 'calculator' returned successfully
         INFO | slimagents.Agent | Turn 0: (After XX.XX s) Run completed due to final answer reached in tool call
+        """
+    )
+
+    assert log == expected_log
+
+
+@pytest.mark.asyncio
+async def test_log_debug():
+    with capture_logs('slimagents', level=logging.DEBUG) as log_buffer:
+        def calculator(expression: str) -> int:
+            """You always use the calculator tool to calculate mathematical expressions."""
+            return ToolResult(value=eval(expression), is_final_answer=True)
+        
+        master = Agent(
+            instructions="You don't know math, but you have a calculator that you rely on.",
+            temperature=0.0,
+            tools=[calculator],
+            response_format=float,
+        )
+        await master("What is 2 + 2?")
+    log = log_buffer.getvalue()
+    print("Log captured:\n" + log)
+    expected_log = dedent(
+        """\
+        DEBUG | slimagents.Agent | Starting run with input(s): ('What is 2 + 2?',)
+        DEBUG | slimagents.Agent | Turn 0: Getting chat completion for: [{'role': 'system', 'content': "You don't know math, but you have a calculator that you rely on."}, {'role': 'user', 'content': 'What is 2 + 2?'}]
+        DEBUG | slimagents.Agent | Turn 0: (After XX.XX s) Received completion: {'content': None, 'role': 'assistant', 'tool_calls': [{'function': {'arguments': '{"expression":"2 + 2"}', 'name': 'calculator'}, 'id': 'call_XXXX', 'type': 'function'}], 'function_call': None, 'annotations': [], 'sender': 'Agent'}
+        DEBUG | slimagents.Agent | Turn 0: Processing tool call 'calculator' with arguments {'expression': '2 + 2'}
+        DEBUG | slimagents.Agent | Turn 0: (After XX.XX s) Tool call 'calculator' returned ToolResult(value=4, agent=None, is_final_answer=True, handoff=False)
+        DEBUG | slimagents.Agent | Turn 0: (After XX.XX s) Run completed due to final answer reached in tool call: 4
         """
     )
 
