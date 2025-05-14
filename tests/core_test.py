@@ -4,6 +4,7 @@
 # pip install diskcache
 
 import json
+from textwrap import dedent
 from time import time
 import pytest
 from dotenv import load_dotenv
@@ -12,6 +13,10 @@ import slimagents.config as config
 import litellm
 from litellm.caching.caching import Cache
 from pydantic import AnyUrl, BaseModel
+import re
+import logging
+import io
+from contextlib import contextmanager
 
 from slimagents.core import ToolResult
 # Set caching configuration
@@ -21,6 +26,38 @@ litellm.cache = Cache(type="disk", disk_cache_dir="./tests/llm_cache")
 
 # .env file must contain OPENAI_API_KEY=sk-...
 load_dotenv()
+
+
+def normalize_log_timings(log: str) -> str:
+    """
+    Replace timing values like '0.02 s' with 'XX.XX s' in the log string.
+    """
+    return re.sub(r'([0-9]+\.[0-9]{2}) s', 'XX.XX s', log)
+
+
+@contextmanager
+def capture_logs(logger_name='slimagents', level=logging.INFO, fmt='%(levelname)s | %(name)s | %(message)s', normalize=True):
+    class LogBuffer(io.StringIO):
+        def getvalue(self):
+            return normalize_log_timings(super().getvalue()) if normalize else super().getvalue()
+    log_buffer = LogBuffer()
+    handler = logging.StreamHandler(log_buffer)
+    handler.setFormatter(logging.Formatter(fmt))
+    logger = logging.getLogger(logger_name)
+    old_handlers = logger.handlers[:]
+    old_level = logger.level
+    old_propagate = logger.propagate
+    logger.handlers = []
+    logger.addHandler(handler)
+    logger.setLevel(level)
+    logger.propagate = False
+    try:
+        yield log_buffer
+    finally:
+        handler.flush()
+        logger.handlers = old_handlers
+        logger.setLevel(old_level)
+        logger.propagate = old_propagate
 
 
 def calculator(expression: str) -> int:
@@ -399,3 +436,32 @@ async def test_final_answer():
     )
     value = await master("What is 2 + 2?")
     assert value == 4
+
+
+@pytest.mark.asyncio
+async def test_log_info():
+    with capture_logs('slimagents') as log_buffer:
+        def calculator(expression: str) -> int:
+            """You always use the calculator tool to calculate mathematical expressions."""
+            return ToolResult(value=eval(expression), is_final_answer=True)
+        
+        master = Agent(
+            instructions="You don't know math, but you have a calculator that you rely on.",
+            temperature=0.0,
+            tools=[calculator],
+            response_format=float,
+        )
+        await master("What is 2 + 2?")
+    log = log_buffer.getvalue()
+    expected_log = dedent(
+        """\
+        INFO | slimagents.Agent | Starting run with 1 input(s)
+        INFO | slimagents.Agent | Turn 0: Getting chat completion for 2 messages
+        INFO | slimagents.Agent | Turn 0: (After XX.XX s) Received completion with tool calls.
+        INFO | slimagents.Agent | Turn 0: Processing tool call: calculator
+        INFO | slimagents.Agent | Turn 0: (After XX.XX s) Tool call calculator returned successfully
+        INFO | slimagents.Agent | Turn 0: (After XX.XX s) Run completed due to final answer reached in tool call
+        """
+    )
+
+    assert log == expected_log
