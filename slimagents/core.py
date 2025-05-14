@@ -419,7 +419,7 @@ class Agent:
         )
 
 
-    def _get_user_message(self, inputs: tuple, model: str) -> dict:
+    def _get_user_message(self, inputs: tuple) -> dict:
         def user_message_part(input):
             if isinstance(input, str):
                 return {
@@ -649,7 +649,7 @@ class Agent:
             raise ValueError("memory_delta must be an empty list if provided as a parameter")
         
         if inputs:
-            memory_delta.append(self._get_user_message(inputs, self.model))
+            memory_delta.append(self._get_user_message(inputs))
 
         if self.logger.getEffectiveLevel() <= logging.DEBUG:
             self.logger.debug("Starting run with input(s): %s", inputs)
