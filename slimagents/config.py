@@ -6,8 +6,8 @@ caching = False
 # The default logger for the slimagents package.
 logger = logging.getLogger("slimagents")
 
-# The root logger for the Agent class and subclasses (if agent_logger is True).
-# It defaults to the default logger - `logger`.
+# The root logger for the Agent class and subclasses (if separate_agent_logger is True).
+# It defaults to the default logger (`slimagents`).
 agent_logger = logger
 
 # This option is used to specify if a separate logger should be created for each Agent subclass.
@@ -20,4 +20,4 @@ separate_agent_logger = False
 # Default is False.
 debug_log_streaming_deltas = False
 
-__all__ = ["caching", "logger", "agent_logger", "separate_agent_logger"]
+__all__ = ["caching", "logger", "agent_logger", "separate_agent_logger", "debug_log_streaming_deltas"]

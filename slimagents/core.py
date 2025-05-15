@@ -91,7 +91,8 @@ class Agent:
         if logger:
             self.logger = logger
         elif config.separate_agent_logger and self.__class__ != Agent:
-            self.logger = config.agent_logger.getChild(f"{__name__}.{self.__class__.__name__}")
+            logger_name = f"{self.__class__.__module__}.{self.__class__.__name__}"
+            self.logger = config.agent_logger.getChild(logger_name)
         else:
             # Use the class level logger
             pass

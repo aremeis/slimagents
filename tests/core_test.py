@@ -600,3 +600,60 @@ async def test_log_custom_logger():
     assert log == expected_log
 
 
+@pytest.mark.asyncio
+async def test_log_separate_agent_logger1():
+    class MyAgent(Agent):
+        pass
+    try:
+        old_separate_agent_logger = config.separate_agent_logger
+        config.separate_agent_logger = True
+        with capture_logs() as log_buffer:
+            agent = MyAgent(
+                instructions="You always answer YES verbatim to all questions.",
+                temperature=0.0,
+            )
+            await agent("What is 2 + 2?")
+    finally:
+        config.separate_agent_logger = old_separate_agent_logger
+    log = log_buffer.getvalue()
+    # print("Log captured:\n" + log)
+    expected_log = dedent(
+        """\
+        INFO | slimagents.core_test.MyAgent | Run XXXXXX-0: Starting run with 1 input(s)
+        INFO | slimagents.core_test.MyAgent | Run XXXXXX-0: Getting chat completion for 2 messages
+        INFO | slimagents.core_test.MyAgent | Run XXXXXX-0: (After XX.XX s) Received completion with text content.
+        INFO | slimagents.core_test.MyAgent | Run XXXXXX-0: (After XX.XX s) Run completed
+        """
+    )
+    assert log == expected_log
+
+
+@pytest.mark.asyncio
+async def test_log_separate_agent_logger2():
+    class MyAgent(Agent):
+        pass
+    try:
+        old_agent_logger = config.agent_logger
+        old_separate_agent_logger = config.separate_agent_logger
+        config.separate_agent_logger = True
+        config.agent_logger = logging.getLogger()
+        with capture_logs("core_test") as log_buffer:
+            agent = MyAgent(
+                instructions="You always answer YES verbatim to all questions.",
+                temperature=0.0,
+            )
+            await agent("What is 2 + 2?")
+    finally:
+        config.separate_agent_logger = old_separate_agent_logger
+        config.agent_logger = old_agent_logger
+    log = log_buffer.getvalue()
+    # print("Log captured:\n" + log)
+    expected_log = dedent(
+        """\
+        INFO | core_test.MyAgent | Run XXXXXX-0: Starting run with 1 input(s)
+        INFO | core_test.MyAgent | Run XXXXXX-0: Getting chat completion for 2 messages
+        INFO | core_test.MyAgent | Run XXXXXX-0: (After XX.XX s) Received completion with text content.
+        INFO | core_test.MyAgent | Run XXXXXX-0: (After XX.XX s) Run completed
+        """
+    )
+    assert log == expected_log
