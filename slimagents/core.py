@@ -330,8 +330,9 @@ class Agent:
         for tool_call in tool_calls:
             function = tool_call["function"]
             name = function["name"]
+            tool_id = tool_call["id"]
             if name not in function_map:
-                self.logger.warning("Turn %d: Tool %s not found in function map.", turn, name)
+                self.logger.warning("Turn %d: Tool '%s' (id: '%s') not found in function map.", turn, name, tool_id)
                 self._update_partial_response(partial_response, tool_call, ToolResult(value=f"Error: Tool {name} not found."))
                 continue            
             
@@ -340,31 +341,31 @@ class Agent:
             func = function_map[name]
             
             if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                self.logger.debug("Turn %d: Processing tool call '%s' with arguments %s", turn, name, args)
+                self.logger.debug("Turn %d: Processing tool call '%s' (id: '%s') with arguments %s", turn, name, tool_id, args)
             else:
-                self.logger.info("Turn %d: Processing tool call '%s'", turn, name)
+                self.logger.info("Turn %d: Processing tool call '%s' (id: '%s')", turn, name, tool_id)
             t0 = time.time()
             raw_result = func(**args)
             delta_t = time.time() - t0
             if inspect.iscoroutine(raw_result):
                 # Store coroutine with its metadata for parallel execution
-                self.logger.info("Turn %d: Async tool call found: %s", turn, name)
+                self.logger.info("Turn %d: Async tool call found: '%s' (id: '%s')", turn, name, tool_id)
                 async def tool_call_wrapper(raw_result):
                     t0 = time.time()
                     ret = await raw_result
                     delta_t = time.time() - t0
                     if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                        self.logger.debug("Turn %d: (After %.2f s) Async tool call '%s' returned %s", turn, delta_t, name, ret)
+                        self.logger.debug("Turn %d: (After %.2f s) Async tool call '%s' (id: '%s') returned %s", turn, delta_t, name, tool_id, ret)
                     else:
-                        self.logger.info("Turn %d: (After %.2f s) Async tool call '%s' returned successfully", turn, delta_t, name)
+                        self.logger.info("Turn %d: (After %.2f s) Async tool call '%s' (id: '%s') returned successfully", turn, delta_t, name, tool_id)
                     return ret
                 async_tasks.append((tool_call, tool_call_wrapper(raw_result)))
             else:
                 # Handle synchronous results immediately
                 if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                    self.logger.debug("Turn %d: (After %.2f s) Tool call '%s' returned %s", turn, delta_t, name, raw_result)
+                    self.logger.debug("Turn %d: (After %.2f s) Tool call '%s' (id: '%s') returned %s", turn, delta_t, name, tool_id, raw_result)
                 else:
-                    self.logger.info("Turn %d: (After %.2f s) Tool call '%s' returned successfully", turn, delta_t, name)
+                    self.logger.info("Turn %d: (After %.2f s) Tool call '%s' (id: '%s') returned successfully", turn, delta_t, name, tool_id)
                 result = await self._handle_function_result(raw_result, memory, memory_delta, caching)
                 self._update_partial_response(partial_response, tool_call, result)
                 if partial_response.result:

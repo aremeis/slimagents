@@ -442,7 +442,27 @@ async def test_final_answer():
 
 
 @pytest.mark.asyncio
-async def test_log_info():
+async def test_log_info_basic():
+    with capture_logs('slimagents') as log_buffer:
+        master = Agent(
+            instructions="You always answer YES verbatim to all questions.",
+            temperature=0.0,
+        )
+        await master("What is 2 + 2?")
+    log = log_buffer.getvalue()
+    expected_log = dedent(
+        """\
+        INFO | slimagents.Agent | Starting run with 1 input(s)
+        INFO | slimagents.Agent | Turn 0: Getting chat completion for 2 messages
+        INFO | slimagents.Agent | Turn 0: (After XX.XX s) Received completion with text content.
+        INFO | slimagents.Agent | Turn 0: (After XX.XX s) Run completed
+        """
+    )
+    assert log == expected_log
+
+
+@pytest.mark.asyncio
+async def test_log_info_tool_call():
     with capture_logs('slimagents') as log_buffer:
         def calculator(expression: str) -> int:
             """You always use the calculator tool to calculate mathematical expressions."""
@@ -456,24 +476,45 @@ async def test_log_info():
         )
         await master("What is 2 + 2?")
     log = log_buffer.getvalue()
+    # print("Log captured:\n" + log)
     expected_log = dedent(
         """\
         INFO | slimagents.Agent | Starting run with 1 input(s)
         INFO | slimagents.Agent | Turn 0: Getting chat completion for 2 messages
         INFO | slimagents.Agent | Turn 0: (After XX.XX s) Received completion with tool calls.
-        INFO | slimagents.Agent | Turn 0: Processing tool call 'calculator'
-        INFO | slimagents.Agent | Turn 0: (After XX.XX s) Tool call 'calculator' returned successfully
+        INFO | slimagents.Agent | Turn 0: Processing tool call 'calculator' (id: 'call_XXXX')
+        INFO | slimagents.Agent | Turn 0: (After XX.XX s) Tool call 'calculator' (id: 'call_XXXX') returned successfully
         INFO | slimagents.Agent | Turn 0: (After XX.XX s) Run completed due to final answer reached in tool call
         """
     )
-
     assert log == expected_log
 
 
 @pytest.mark.asyncio
-async def test_log_debug():
+async def test_log_debug_basic():
     with capture_logs('slimagents', level=logging.DEBUG) as log_buffer:
-        def calculator(expression: str) -> int:
+        master = Agent(
+            instructions="You always answer YES verbatim to all questions.",
+            temperature=0.0,
+        )
+        await master("What is 2 + 2?")
+    log = log_buffer.getvalue()
+    # print("Log captured:\n" + log)
+    expected_log = dedent(
+        """\
+        DEBUG | slimagents.Agent | Starting run with input(s): ('What is 2 + 2?',)
+        DEBUG | slimagents.Agent | Turn 0: Getting chat completion for: [{'role': 'system', 'content': 'You always answer YES verbatim to all questions.'}, {'role': 'user', 'content': 'What is 2 + 2?'}]
+        DEBUG | slimagents.Agent | Turn 0: (After XX.XX s) Received completion: {'content': 'YES', 'role': 'assistant', 'tool_calls': None, 'function_call': None, 'annotations': [], 'sender': 'Agent'}
+        DEBUG | slimagents.Agent | Turn 0: (After XX.XX s) Run completed with value YES
+        """
+    )
+    assert log == expected_log
+
+
+@pytest.mark.asyncio
+async def test_log_debug_tool_call():
+    with capture_logs('slimagents', level=logging.DEBUG) as log_buffer:
+        async def calculator(expression: str) -> int:
             """You always use the calculator tool to calculate mathematical expressions."""
             return ToolResult(value=eval(expression), is_final_answer=True)
         
@@ -485,16 +526,17 @@ async def test_log_debug():
         )
         await master("What is 2 + 2?")
     log = log_buffer.getvalue()
-    print("Log captured:\n" + log)
+    # print("Log captured:\n" + log)
     expected_log = dedent(
         """\
         DEBUG | slimagents.Agent | Starting run with input(s): ('What is 2 + 2?',)
         DEBUG | slimagents.Agent | Turn 0: Getting chat completion for: [{'role': 'system', 'content': "You don't know math, but you have a calculator that you rely on."}, {'role': 'user', 'content': 'What is 2 + 2?'}]
         DEBUG | slimagents.Agent | Turn 0: (After XX.XX s) Received completion: {'content': None, 'role': 'assistant', 'tool_calls': [{'function': {'arguments': '{"expression":"2 + 2"}', 'name': 'calculator'}, 'id': 'call_XXXX', 'type': 'function'}], 'function_call': None, 'annotations': [], 'sender': 'Agent'}
-        DEBUG | slimagents.Agent | Turn 0: Processing tool call 'calculator' with arguments {'expression': '2 + 2'}
-        DEBUG | slimagents.Agent | Turn 0: (After XX.XX s) Tool call 'calculator' returned ToolResult(value=4, agent=None, is_final_answer=True, handoff=False)
+        DEBUG | slimagents.Agent | Turn 0: Processing tool call 'calculator' (id: 'call_XXXX') with arguments {'expression': '2 + 2'}
+        INFO | slimagents.Agent | Turn 0: Async tool call found: 'calculator' (id: 'call_XXXX')
+        INFO | slimagents.Agent | Turn 0: Processing 1 async tool call(s)
+        DEBUG | slimagents.Agent | Turn 0: (After XX.XX s) Async tool call 'calculator' (id: 'call_XXXX') returned ToolResult(value=4, agent=None, is_final_answer=True, handoff=False)
         DEBUG | slimagents.Agent | Turn 0: (After XX.XX s) Run completed due to final answer reached in tool call: 4
         """
     )
-
     assert log == expected_log
