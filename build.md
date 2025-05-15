@@ -31,7 +31,8 @@ Upload to pypi
 python -m twine upload dist/*
 ```
 
-Build, tag, release and upload to pypi
+Build, tag, release and upload to pypi.
+Note: First set new version in pyproject.toml, but don't commit!
 ```shell
 ./release.sh
 ```
