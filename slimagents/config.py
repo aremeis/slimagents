@@ -16,4 +16,8 @@ agent_logger = logger
 # Default is False.
 separate_agent_logger = False
 
+# This option is used to specify if the streaming deltas should be logged. Only applicable for DEBUG level logging.
+# Default is False.
+debug_log_streaming_deltas = False
+
 __all__ = ["caching", "logger", "agent_logger", "separate_agent_logger"]

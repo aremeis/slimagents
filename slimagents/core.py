@@ -3,8 +3,10 @@ import base64
 from dataclasses import dataclass, field
 import json
 from collections import defaultdict
+import random
+import string
 import time
-from typing import Callable, Optional, Union, Coroutine, Any
+from typing import AsyncGenerator, Callable, Optional, Union, Coroutine, Any
 import inspect
 import asyncio
 import logging
@@ -229,7 +231,7 @@ class Agent:
         return params
 
 
-    async def _get_chat_completion(self, turns: int, memory: list[dict], memory_delta: list[dict], stream: bool = False, caching: bool = False):
+    async def _get_chat_completion(self, run_id: str, turns: int, memory: list[dict], memory_delta: list[dict], stream: bool = False, caching: bool = False):
         if self.instructions:
             messages = [{"role": "system", "content": self.instructions}]
         else:
@@ -241,9 +243,9 @@ class Agent:
         # Add the memory added by the agent during the current call
         messages.extend(memory_delta)
         if self.logger.getEffectiveLevel() <= logging.DEBUG:
-            self.logger.debug("Turn %d: Getting chat completion for: %s", turns, messages)
+            self.logger.debug("Run %s-%d: Getting chat completion for: %s", run_id, turns, messages)
         else:
-            self.logger.info("Turn %d: Getting chat completion for %d messages", turns, len(messages))
+            self.logger.info("Run %s-%d: Getting chat completion for %d messages", run_id, turns, len(messages))
 
         create_params = self.__get_all_chat_completion_params().copy()
         create_params["messages"] = messages
@@ -252,10 +254,10 @@ class Agent:
         return await acompletion(**create_params)
 
 
-    async def _handle_function_result(self, result, memory: list[dict], memory_delta: list[dict], caching: bool) -> ToolResult:
+    async def _handle_function_result(self, run_id: str, result, memory: list[dict], memory_delta: list[dict], caching: bool) -> ToolResult:
         if isinstance(result, ToolResult):
             if result.agent and not result.handoff:
-                response = await result.agent._run(memory=memory.copy(), memory_delta=memory_delta.copy(), caching=caching)
+                response = await result.agent._run(run_id, memory=memory.copy(), memory_delta=memory_delta.copy(), caching=caching)
                 result.value = response.value
                 result.agent = None
                 return result
@@ -317,6 +319,7 @@ class Agent:
 
     async def _handle_tool_calls(
             self,
+            run_id: str,
             turn: int,
             tool_calls: list[ChatCompletionMessageToolCallParam],
             memory: list[dict],
@@ -332,7 +335,7 @@ class Agent:
             name = function["name"]
             tool_id = tool_call["id"]
             if name not in function_map:
-                self.logger.warning("Turn %d: Tool '%s' (id: '%s') not found in function map.", turn, name, tool_id)
+                self.logger.warning("Run %s-%d: Tool '%s' (id: '%s') not found in function map.", run_id, turn, name, tool_id)
                 self._update_partial_response(partial_response, tool_call, ToolResult(value=f"Error: Tool {name} not found."))
                 continue            
             
@@ -341,42 +344,42 @@ class Agent:
             func = function_map[name]
             
             if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                self.logger.debug("Turn %d: Processing tool call '%s' (id: '%s') with arguments %s", turn, name, tool_id, args)
+                self.logger.debug("Run %s-%d: Processing tool call '%s' (id: '%s') with arguments %s", run_id, turn, name, tool_id, args)
             else:
-                self.logger.info("Turn %d: Processing tool call '%s' (id: '%s')", turn, name, tool_id)
+                self.logger.info("Run %s-%d: Processing tool call '%s' (id: '%s')", run_id, turn, name, tool_id)
             t0 = time.time()
             raw_result = func(**args)
             delta_t = time.time() - t0
             if inspect.iscoroutine(raw_result):
                 # Store coroutine with its metadata for parallel execution
-                self.logger.info("Turn %d: Async tool call found: '%s' (id: '%s')", turn, name, tool_id)
+                self.logger.info("Run %s-%d: Async tool call found: '%s' (id: '%s')", run_id, turn, name, tool_id)
                 async def tool_call_wrapper(raw_result):
                     t0 = time.time()
                     ret = await raw_result
                     delta_t = time.time() - t0
                     if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                        self.logger.debug("Turn %d: (After %.2f s) Async tool call '%s' (id: '%s') returned %s", turn, delta_t, name, tool_id, ret)
+                        self.logger.debug("Run %s-%d: (After %.2f s) Async tool call '%s' (id: '%s') returned %s", run_id, turn, delta_t, name, tool_id, ret)
                     else:
-                        self.logger.info("Turn %d: (After %.2f s) Async tool call '%s' (id: '%s') returned successfully", turn, delta_t, name, tool_id)
+                        self.logger.info("Run %s-%d: (After %.2f s) Async tool call '%s' (id: '%s') returned successfully", run_id, turn, delta_t, name, tool_id)
                     return ret
                 async_tasks.append((tool_call, tool_call_wrapper(raw_result)))
             else:
                 # Handle synchronous results immediately
                 if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                    self.logger.debug("Turn %d: (After %.2f s) Tool call '%s' (id: '%s') returned %s", turn, delta_t, name, tool_id, raw_result)
+                    self.logger.debug("Run %s-%d: (After %.2f s) Tool call '%s' (id: '%s') returned %s", run_id, turn, delta_t, name, tool_id, raw_result)
                 else:
-                    self.logger.info("Turn %d: (After %.2f s) Tool call '%s' (id: '%s') returned successfully", turn, delta_t, name, tool_id)
-                result = await self._handle_function_result(raw_result, memory, memory_delta, caching)
+                    self.logger.info("Run %s-%d: (After %.2f s) Tool call '%s' (id: '%s') returned successfully", run_id, turn, delta_t, name, tool_id)
+                result = await self._handle_function_result(run_id, raw_result, memory, memory_delta, caching)
                 self._update_partial_response(partial_response, tool_call, result)
                 if partial_response.result:
                     break
 
         # Execute async tasks in parallel if any exist
         if async_tasks:
-            self.logger.info("Turn %d: Processing %d async tool call(s)", turn, len(async_tasks))
+            self.logger.info("Run %s-%d: Processing %d async tool call(s)", run_id, turn, len(async_tasks))
             raw_results = await asyncio.gather(*(task[1] for task in async_tasks))
             for (tool_call, _), raw_result in zip(async_tasks, raw_results):
-                result = await self._handle_function_result(raw_result, memory, memory_delta, caching)
+                result = await self._handle_function_result(run_id, raw_result, memory, memory_delta, caching)
                 self._update_partial_response(partial_response, tool_call, result)
                 if partial_response.result:
                     break
@@ -386,7 +389,7 @@ class Agent:
         return partial_response
 
 
-    def _handle_partial_response(self, turns: int, t0_run: float, partial_response: HandleToolCallResult, message: dict, memory: list[dict], memory_delta: list[dict]) -> Optional[Response]:
+    def _handle_partial_response(self, run_id: str, turns: int, t0_run: float, partial_response: HandleToolCallResult, message: dict, memory: list[dict], memory_delta: list[dict]) -> Optional[Response]:
         if partial_response.filtered_tool_calls:
             # Only add tool calls to memory if there are any left after filtering
             memory_delta.append(message)
@@ -394,9 +397,9 @@ class Agent:
         if partial_response.result:
             t_run_delta = time.time() - t0_run
             if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                self.logger.debug("Turn %d: (After %.2f s) Run completed due to final answer reached in tool call: %s", turns, t_run_delta, partial_response.result.value)
+                self.logger.debug("Run %s-%d: (After %.2f s) Run completed due to final answer reached in tool call: %s", run_id, turns, t_run_delta, partial_response.result.value)
             else:
-                self.logger.info("Turn %d: (After %.2f s) Run completed due to final answer reached in tool call", turns, t_run_delta)
+                self.logger.info("Run %s-%d: (After %.2f s) Run completed due to final answer reached in tool call", run_id, turns, t_run_delta)
             memory.extend(memory_delta)
             return Response(
                 value=partial_response.result.value,
@@ -405,14 +408,14 @@ class Agent:
             )
         
 
-    def _get_response(self, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict]):
+    def _get_response(self, run_id: str, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict]):
         memory.extend(memory_delta)
         value = self._get_value(memory[-1]["content"])
         t_run_delta = time.time() - t0_run
         if self.logger.getEffectiveLevel() <= logging.DEBUG:
-            self.logger.debug("Turn %d: (After %.2f s) Run completed with value %s", turns, t_run_delta, value)
+            self.logger.debug("Run %s-%d: (After %.2f s) Run completed with value %s", run_id, turns, t_run_delta, value)
         else:
-            self.logger.info("Turn %d: (After %.2f s) Run completed", turns, t_run_delta)
+            self.logger.info("Run %s-%d: (After %.2f s) Run completed", run_id, turns, t_run_delta)
         return Response(
             value=value,
             memory_delta=memory_delta,
@@ -465,21 +468,22 @@ class Agent:
             return {"role": "user", "content": [user_message_part(input) for input in inputs]} 
 
 
-    def _log_completion(self, turns: int, t0: float, message: dict):
+    def _log_completion(self, run_id: str, turns: int, t0: float, message: dict):
         delta_t = time.time() - t0
         if self.logger.getEffectiveLevel() <= logging.DEBUG:
-            self.logger.debug("Turn %d: (After %.2f s) Received completion: %s", turns, delta_t, message)
+            self.logger.debug("Run %s-%d: (After %.2f s) Received completion: %s", run_id, turns, delta_t, message)
         else:
             if message["tool_calls"] and message["content"]:
-                self.logger.info("Turn %d: (After %.2f s) Received completion with tool calls and text content.", turns, delta_t)
+                self.logger.info("Run %s-%d: (After %.2f s) Received completion with tool calls and text content.", run_id, turns, delta_t)
             elif message["tool_calls"]:
-                self.logger.info("Turn %d: (After %.2f s) Received completion with tool calls.", turns, delta_t)
+                self.logger.info("Run %s-%d: (After %.2f s) Received completion with tool calls.", run_id, turns, delta_t)
             elif message["content"]:
-                self.logger.info("Turn %d: (After %.2f s) Received completion with text content.", turns, delta_t)
+                self.logger.info("Run %s-%d: (After %.2f s) Received completion with text content.", run_id, turns, delta_t)
 
 
     async def _run_and_stream(
             self,
+            run_id: str,
             memory: list[dict],
             memory_delta: list[dict],
             stream_tokens: bool,
@@ -512,13 +516,14 @@ class Agent:
 
             t0 = time.time()
             # get completion with current history, agent
-            completion = await active_agent._get_chat_completion(turns, memory, memory_delta, stream=True, caching=caching)
+            completion = await active_agent._get_chat_completion(run_id, turns, memory, memory_delta, stream=True, caching=caching)
 
             if stream_delimiters:
                 yield {"delim": "start"}
             async for chunk in completion:
                 delta = json.loads(chunk.choices[0].delta.json())
-                self.logger.debug("Turn %d: Received delta: %s", turns, delta)
+                if config.debug_log_streaming_deltas:
+                    self.logger.debug("Run %s-%d: Received delta: %s", run_id, turns, delta)
                 if delta["role"] == "assistant":
                     delta["sender"] = active_agent.name
                 if "content" in delta and delta["content"]:
@@ -545,10 +550,9 @@ class Agent:
             if not message["tool_calls"]:
                 message["tool_calls"] = None
 
-            active_agent._log_completion(turns, t0, message)
+            active_agent._log_completion(run_id, turns, t0, message)
 
             if not message["tool_calls"] or not execute_tools:
-                active_agent.logger.debug("Turn %d: Ending turn.", turns)
                 memory_delta.append(message)
                 break
 
@@ -565,8 +569,8 @@ class Agent:
                 tool_calls.append(tool_call_object)
 
             # handle function calls and switching agents
-            partial_response = await active_agent._handle_tool_calls(turns, tool_calls, memory, memory_delta, caching)
-            response = active_agent._handle_partial_response(turns, t0_run, partial_response, message, memory, memory_delta)
+            partial_response = await active_agent._handle_tool_calls(run_id, turns, tool_calls, memory, memory_delta, caching)
+            response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta)
             if response:
                 if stream_response:
                     yield response
@@ -580,13 +584,14 @@ class Agent:
 
         memory.extend(memory_delta)
         if stream_response:
-            yield active_agent._get_response(turns, t0_run, memory, memory_delta)
+            yield active_agent._get_response(run_id, turns, t0_run, memory, memory_delta)
         else:
-            active_agent.logger.info("Turn %d: (After %.2f s) Run completed", turns, time.time() - t0_run)
+            active_agent.logger.info("Run %s-%d: (After %.2f s) Run completed", run_id, turns, time.time() - t0_run)
 
 
     async def _run(
             self,
+            run_id: str,
             memory: Optional[list[dict]] = None,
             memory_delta: Optional[list[dict]] = None,
             max_turns: Optional[int] = float("inf"),
@@ -601,19 +606,19 @@ class Agent:
             active_agent._before_chat_completion()
             # get completion with current history, agent
             t0 = time.time()
-            completion = await active_agent._get_chat_completion(turns, memory, memory_delta, caching=caching)
+            completion = await active_agent._get_chat_completion(run_id, turns, memory, memory_delta, caching=caching)
             message = completion.choices[0].message.model_dump()
             message["sender"] = active_agent.name
 
-            active_agent._log_completion(turns, t0, message)
+            active_agent._log_completion(run_id, turns, t0, message)
 
             if not message["tool_calls"] or not execute_tools:
                 memory_delta.append(message)
                 break
 
             # handle function calls and switching agents
-            partial_response = await active_agent._handle_tool_calls(turns, message["tool_calls"], memory, memory_delta, caching)
-            response = active_agent._handle_partial_response(turns, t0_run, partial_response, message, memory, memory_delta)
+            partial_response = await active_agent._handle_tool_calls(run_id, turns, message["tool_calls"], memory, memory_delta, caching)
+            response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta)
             if response:
                 return response
             
@@ -622,7 +627,12 @@ class Agent:
 
             turns += 1
 
-        return active_agent._get_response(turns, t0_run, memory, memory_delta)
+        return active_agent._get_response(run_id, turns, t0_run, memory, memory_delta)
+
+
+    def _get_run_id(self):
+        # 6 random alphanumeric characters
+        return ''.join(random.choices(string.ascii_letters + string.digits, k=6))
 
     
     async def run(
@@ -638,7 +648,7 @@ class Agent:
             max_turns: Optional[int] = float("inf"),
             execute_tools: Optional[bool] = True,
             caching: Optional[bool] = None,
-    ) -> Response:
+    ) -> Response | AsyncGenerator[Response, None]:
         if memory is None:
             memory = []
         if caching is None:
@@ -652,13 +662,16 @@ class Agent:
         if inputs:
             memory_delta.append(self._get_user_message(inputs))
 
+        run_id = self._get_run_id()
+
         if self.logger.getEffectiveLevel() <= logging.DEBUG:
-            self.logger.debug("Starting run with input(s): %s", inputs)
+            self.logger.debug("Run %s-0: Starting run with input(s): %s", run_id, inputs)
         else:
-            self.logger.info("Starting run with %d input(s)", len(inputs))
+            self.logger.info("Run %s-0: Starting run with %d input(s)", run_id, len(inputs))
 
         if stream:
             return self._run_and_stream(
+                run_id=run_id,
                 memory=memory,
                 memory_delta=memory_delta,
                 stream_tokens=stream_tokens,
@@ -669,14 +682,15 @@ class Agent:
                 execute_tools=execute_tools,
                 caching=caching,
             )
-        
-        return await self._run(
-            memory=memory,
-            memory_delta=memory_delta,
-            max_turns=max_turns,
-            execute_tools=execute_tools,
-            caching=caching,
-        )
+        else:
+            return await self._run(
+                run_id=run_id,
+                memory=memory,
+                memory_delta=memory_delta,
+                max_turns=max_turns,
+                execute_tools=execute_tools,
+                caching=caching,
+            )
 
 
     def run_sync(
