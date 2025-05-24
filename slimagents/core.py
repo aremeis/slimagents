@@ -589,8 +589,8 @@ class Agent:
             partial_response = await active_agent._handle_tool_calls(run_id, turns, tool_calls, memory, memory_delta, caching)
             
             if stream_delimiters:
-                for message in partial_response.messages:
-                    yield MessageDelimiter(delimiter=Delimiter.TOOL_CALL, message=message)
+                for tool_message in partial_response.messages:
+                    yield MessageDelimiter(delimiter=Delimiter.TOOL_CALL, message=tool_message)
             
             response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta)
             if response:

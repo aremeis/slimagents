@@ -221,6 +221,26 @@ async def test_stream_tool_calls():
 
 
 @pytest.mark.asyncio
+async def test_stream_tool_calls_with_delimiters():
+    agent = Agent(
+        instructions="You are an expert calculator. You always use the calculator to answer questions.",
+        temperature=0.0,
+        tools=[calculator],
+    )
+    input_ = "What is 2 + 2?"
+    chunks = []
+    async for chunk in await agent.run(input_, stream=True, stream_delimiters=True):
+        chunks.append(chunk)
+    assert len(chunks) == 6
+    assert chunks[0].delimiter == Delimiter.ASSISTANT_START
+    assert chunks[1].delimiter == Delimiter.ASSISTANT_END
+    assert chunks[2].delimiter == Delimiter.TOOL_CALL
+    assert chunks[3].delimiter == Delimiter.ASSISTANT_START
+    assert chunks[4] == "2 + 2 = 4"
+    assert chunks[5].delimiter == Delimiter.ASSISTANT_END
+
+
+@pytest.mark.asyncio
 @pytest.mark.skip(reason="Skip to avoid token cost")
 async def test_caching():
     class CachingAgent(Agent):
