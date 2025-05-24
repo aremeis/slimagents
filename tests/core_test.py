@@ -106,9 +106,9 @@ async def test_stream_response():
         instructions="You always answer 'YES' (verbatim) to all questions.",
         temperature=0.0,
     )
-    input = "Are you a helpful assistant?"
+    input_ = "Are you a helpful assistant?"
     chunks = []
-    async for chunk in await agent(input, stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True):
+    async for chunk in await agent(input_, stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True):
         chunks.append(chunk)
     assert chunks[0] == {"delim": "start"}
     assert chunks[1]["content"] == "YES"
@@ -178,8 +178,8 @@ async def test_tool_calls():
         temperature=0.0,
         tools=[calculator],
     )
-    input = "What is 2 + 2?"
-    response = await agent.run(input)
+    input_ = "What is 2 + 2?"
+    response = await agent.run(input_)
     assert len(response.memory_delta) == 4
     assert response.memory_delta[0] == {"role": "user", "content": "What is 2 + 2?"}
     assert response.memory_delta[1]["tool_calls"][0]["type"] == "function"
@@ -198,10 +198,10 @@ async def test_stream_tool_calls():
         temperature=0.0,
         tools=[calculator],
     )
-    input = "What is 2 + 2?"
+    input_ = "What is 2 + 2?"
     chunks = []
     output = ""
-    async for chunk in await agent.run(input, stream=True, stream_tool_calls=True, stream_response=True):
+    async for chunk in await agent.run(input_, stream=True, stream_tool_calls=True, stream_response=True):
         if isinstance(chunk, str):
             output += chunk
         else:
@@ -307,8 +307,8 @@ async def test_response_format():
 
 @pytest.mark.asyncio
 async def test_non_string_output():
-    def calculator(input: str) -> float:
-        ret = eval(input)
+    def calculator(input_: str) -> float:
+        ret = eval(input_)
         return ToolResult(value=ret, is_final_answer=True)
     memory = []
     agent = Agent(
@@ -327,7 +327,7 @@ async def test_non_string_output():
     assert value == 6
 
 @pytest.mark.asyncio
-async def test_file_input():
+async def test_file_input_():
     ocr = Agent(
         model="gpt-4o",
         instructions="You extract text from a PDF file and return it in markdown format. Only return the text in the PDF, no other text or comments.",
@@ -386,7 +386,7 @@ async def test_file_input():
 
 
 @pytest.mark.asyncio
-async def test_image_url_input():
+async def test_image_url_input_():
     ocr = Agent(
         model="gpt-4o",
         instructions="You extract text from an image and return it in markdown format. Only return the text in the image, no other text or comments.",
