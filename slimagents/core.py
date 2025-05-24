@@ -537,7 +537,7 @@ class Agent:
                 yield MessageDelimiter(delimiter=Delimiter.ASSISTANT_START, message=message)
 
             async for chunk in completion:
-                delta = json.loads(chunk.choices[0].delta.json())
+                delta = chunk.choices[0].delta.model_dump()
                 if config.debug_log_streaming_deltas:
                     self.logger.debug("Run %s-%d: Received delta: %s", run_id, turns, delta)
                 if delta["role"] == "assistant":
