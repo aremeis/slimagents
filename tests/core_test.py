@@ -18,7 +18,7 @@ import logging
 import io
 from contextlib import contextmanager
 
-from slimagents.core import ToolResult
+from slimagents.core import Delimiter, ToolResult
 # Set caching configuration
 config.caching = True
 litellm.cache = Cache(type="disk", disk_cache_dir="./tests/llm_cache")
@@ -110,9 +110,9 @@ async def test_stream_response():
     chunks = []
     async for chunk in await agent(input_, stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True):
         chunks.append(chunk)
-    assert chunks[0] == {"delim": "start"}
+    assert chunks[0].delimiter == Delimiter.ASSISTANT_START
     assert chunks[1]["content"] == "YES"
-    assert chunks[2] == {"delim": "end"}
+    assert chunks[2].delimiter == Delimiter.ASSISTANT_END
     response = chunks[3]
     assert response.value == "YES"
     assert len(response.memory_delta) == 2

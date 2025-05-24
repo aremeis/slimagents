@@ -1,6 +1,7 @@
 # Standard library imports
 import base64
 from dataclasses import dataclass, field
+from enum import Enum
 import json
 from collections import defaultdict
 import random
@@ -53,6 +54,19 @@ class HandleToolCallResult():
     agent: Optional["Agent"] = None
     filtered_tool_calls: list[ChatCompletionMessageToolCallParam] = field(default_factory=list)
     result: Optional[ToolResult] = None
+
+class Delimiter(Enum):
+    ASSISTANT_START = "assistant_start"
+    ASSISTANT_END = "assistant_end"
+    TOOL_CALL = "tool_call"
+
+@dataclass
+class MessageDelimiter():
+    """
+    A delimiter for the message stream.
+    """
+    delimiter: Delimiter
+    message: dict
 
 # Agent class
 
@@ -500,7 +514,7 @@ class Agent:
         turns = 0
 
         while turns < max_turns:
-            self._before_chat_completion()
+            active_agent._before_chat_completion()
             message = {
                 "content": "",
                 "sender": active_agent.name,
@@ -520,7 +534,8 @@ class Agent:
             completion = await active_agent._get_chat_completion(run_id, turns, memory, memory_delta, stream=True, caching=caching)
 
             if stream_delimiters:
-                yield {"delim": "start"}
+                yield MessageDelimiter(delimiter=Delimiter.ASSISTANT_START, message=message)
+
             async for chunk in completion:
                 delta = json.loads(chunk.choices[0].delta.json())
                 if config.debug_log_streaming_deltas:
@@ -543,8 +558,9 @@ class Agent:
                 delta.pop("role", None)
                 delta.pop("sender", None)
                 merge_chunk(message, delta)
+            
             if stream_delimiters:
-                yield {"delim": "end"}
+                yield MessageDelimiter(delimiter=Delimiter.ASSISTANT_END, message=message)
 
             message["tool_calls"] = list(
                 message.get("tool_calls", {}).values())
@@ -571,6 +587,11 @@ class Agent:
 
             # handle function calls and switching agents
             partial_response = await active_agent._handle_tool_calls(run_id, turns, tool_calls, memory, memory_delta, caching)
+            
+            if stream_delimiters:
+                for message in partial_response.messages:
+                    yield MessageDelimiter(delimiter=Delimiter.TOOL_CALL, message=message)
+            
             response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta)
             if response:
                 if stream_response:
@@ -803,4 +824,4 @@ class Agent:
             return response.value
         
 
-__all__ = ["Agent", "Response", "ToolResult"]
+__all__ = ["Agent", "Response", "ToolResult", "MessageDelimiter", "Delimiter"]
