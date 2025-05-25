@@ -29,16 +29,16 @@ def merge_chunk(final_response: dict, delta: dict) -> None:
     merge_fields(final_response, delta)
 
     tool_calls = delta.get("tool_calls")
-    if tool_calls and len(tool_calls) > 0:
-        tool_call = tool_calls[0]
-        index = tool_call.pop("index")
-        type_ = tool_call.pop("type", None)
-        final_tool_call = final_response["tool_calls"][index]
-        merge_fields(final_tool_call, tool_call)
-        if type_ and not final_tool_call.get("type"):
-            # type = "function" is always returned by LiteLLM in the delta. Bug?
-            # This ensures that the type is only set once.
-            final_tool_call["type"] = type_
+    if tool_calls:
+        for tool_call in tool_calls:
+            index = tool_call.pop("index")
+            type_ = tool_call.pop("type", None)
+            final_tool_call = final_response["tool_calls"][index]
+            merge_fields(final_tool_call, tool_call)
+            if type_ and not final_tool_call.get("type"):
+                # type = "function" is always returned by LiteLLM in the delta. Bug?
+                # This ensures that the type is only set once.
+                final_tool_call["type"] = type_
 
 
 def function_to_json(func) -> dict:
