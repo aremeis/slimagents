@@ -337,20 +337,20 @@ class Agent:
             partial_response: HandleToolCallResult, 
             tool_call: ChatCompletionMessageToolCallParam, 
             result: ToolResult
-    ) -> None:
+    ) -> dict:
         partial_response.filtered_tool_calls.append(tool_call)
-        partial_response.messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call["id"],
-                "tool_name": tool_call["function"]["name"],
-                "content": str(result.value),
-            }
-        )
+        tool_message = {
+            "role": "tool",
+            "tool_call_id": tool_call["id"],
+            "tool_name": tool_call["function"]["name"],
+            "content": str(result.value),
+        }
+        partial_response.messages.append(tool_message)
         if result.agent:
             partial_response.agent = result.agent
         if result.is_final_answer:
             partial_response.result = result
+        return tool_message
 
 
     def _before_chat_completion(self) -> None:
@@ -360,56 +360,48 @@ class Agent:
             self,
             run_id: str,
             turn: int,
-            tool_calls: list[ChatCompletionMessageToolCallParam],
+            tool_calls: list[dict],
             memory: list[dict],
             memory_delta: list[dict],
             caching: bool,
-    ) -> HandleToolCallResult:
+    ) -> AsyncGenerator[tuple[dict, ToolResult], None]:
         function_map = self.__get_function_map()
-        partial_response = HandleToolCallResult(messages=[], agent=None, filtered_tool_calls=[])
 
-        async def tool_call_wrapper(tool_call_task):
-            if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                self.logger.debug("Run %s-%d: Processing tool call '%s' (id: '%s') with arguments %s", run_id, turn, name, tool_id, args)
-            else:
-                self.logger.info("Run %s-%d: Processing tool call '%s' (id: '%s')", run_id, turn, name, tool_id)
-            t0 = time.time()
-            ret = await tool_call_task
-            delta_t = time.time() - t0
-            if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                self.logger.debug("Run %s-%d: (After %.2f s) Tool call '%s' (id: '%s') returned %s", run_id, turn, delta_t, name, tool_id, ret)
-            else:
-                self.logger.info("Run %s-%d: (After %.2f s) Tool call '%s' (id: '%s') returned successfully", run_id, turn, delta_t, name, tool_id)
-            return ret
-    
-        tool_call_tasks = []
-        for tool_call in tool_calls:
+        async def tool_call_wrapper(tool_call):
             function = tool_call["function"]
             name = function["name"]
             tool_id = tool_call["id"]
 
             if name not in function_map:
                 self.logger.warning("Run %s-%d: Tool '%s' (id: '%s') not found in function map.", run_id, turn, name, tool_id)
-                self._update_partial_response(partial_response, tool_call, ToolResult(value=f"Error: Tool {name} not found."))
-                continue
+                return tool_call, ToolResult(value=f"Error: Tool {name} not found.")
             
             args = json.loads(function["arguments"])
-            func = function_map[name]
-            tool_call_task = func(**args)
-            tool_call_tasks.append(tool_call_wrapper(tool_call_task))
+            if self.logger.getEffectiveLevel() <= logging.DEBUG:
+                self.logger.debug("Run %s-%d: Processing tool call '%s' (id: '%s') with arguments %s", run_id, turn, name, tool_id, args)
+            else:
+                self.logger.info("Run %s-%d: Processing tool call '%s' (id: '%s')", run_id, turn, name, tool_id)
+            
+            func = function_map[name]            
+            t0 = time.time()
+            ret = await func(**args)
+            delta_t = time.time() - t0
+            
+            if self.logger.getEffectiveLevel() <= logging.DEBUG:
+                self.logger.debug("Run %s-%d: (After %.2f s) Tool call '%s' (id: '%s') returned %s", run_id, turn, delta_t, name, tool_id, ret)
+            else:
+                self.logger.info("Run %s-%d: (After %.2f s) Tool call '%s' (id: '%s') returned successfully", run_id, turn, delta_t, name, tool_id)
+            
+            result = await self._handle_function_result(run_id, ret, memory, memory_delta, caching)
+            return tool_call, result
 
-        # Execute tool call tasks in parallel if any exist
-        if tool_call_tasks:
-            raw_results = await asyncio.gather(*tool_call_tasks)
-            for tool_call, raw_result in zip(tool_calls, raw_results):
-                tool_call_result = await self._handle_function_result(run_id, raw_result, memory, memory_delta, caching)
-                self._update_partial_response(partial_response, tool_call, tool_call_result)
-                if partial_response.result:
-                    break
-
-        # TODO: Cancel all pending async tasks as soon as one task returns a final answer
-
-        return partial_response
+        # Create tasks for all tool calls
+        tasks = [tool_call_wrapper(tool_call) for tool_call in tool_calls]
+        
+        # Process tool calls as they complete
+        for task in asyncio.as_completed(tasks):
+            tool_call, result = await task
+            yield tool_call, result
 
 
     def _handle_partial_response(self, run_id: str, turns: int, t0_run: float, partial_response: HandleToolCallResult, message: dict, memory: list[dict], memory_delta: list[dict]) -> Optional[Response]:
@@ -581,24 +573,14 @@ class Agent:
                 memory_delta.append(message)
                 break
 
-            # convert tool_calls from dict to objects
-            tool_calls = []
-            for tool_call in message["tool_calls"]:
-                function = Function(
-                    arguments=tool_call["function"]["arguments"],
-                    name=tool_call["function"]["name"],
-                )
-                tool_call_object = ChatCompletionMessageToolCallParam(
-                    id=tool_call["id"], function=function, type=tool_call["type"]
-                )
-                tool_calls.append(tool_call_object)
-
             # handle function calls and switching agents
-            partial_response = await active_agent._handle_tool_calls(run_id, turns, tool_calls, memory, memory_delta, caching)
-            
-            if stream_delimiters:
-                for tool_message in partial_response.messages:
+            partial_response = HandleToolCallResult(messages=[], agent=None, filtered_tool_calls=[])
+            async for tool_call, result in active_agent._handle_tool_calls(run_id, turns, message["tool_calls"], memory, memory_delta, caching):
+                tool_message = active_agent._update_partial_response(partial_response, tool_call, result)
+                if stream_delimiters:
                     yield MessageDelimiter(delimiter=Delimiter.TOOL_CALL, message=tool_message)
+                if partial_response.result:
+                    break
             
             response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta)
             if response:
@@ -647,7 +629,12 @@ class Agent:
                 break
 
             # handle function calls and switching agents
-            partial_response = await active_agent._handle_tool_calls(run_id, turns, message["tool_calls"], memory, memory_delta, caching)
+            partial_response = HandleToolCallResult(messages=[], agent=None, filtered_tool_calls=[])
+            async for tool_call, result in active_agent._handle_tool_calls(run_id, turns, message["tool_calls"], memory, memory_delta, caching):
+                active_agent._update_partial_response(partial_response, tool_call, result)
+                if partial_response.result:
+                    break
+            
             response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta)
             if response:
                 return response
