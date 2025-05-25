@@ -127,3 +127,4 @@ application.db
 
 
 temp/
+test_cache/cache.db

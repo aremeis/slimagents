@@ -108,7 +108,7 @@ async def test_stream_response():
     )
     input_ = "Are you a helpful assistant?"
     chunks = []
-    async for chunk in await agent(input_, stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True):
+    async for chunk in await agent(input_, stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True, caching=False):
         chunks.append(chunk)
     assert chunks[0].delimiter == Delimiter.ASSISTANT_START
     assert chunks[1]["content"] == "YES"
@@ -201,7 +201,7 @@ async def test_stream_tool_calls():
     input_ = "What is 2 + 2?"
     chunks = []
     output = ""
-    async for chunk in await agent.run(input_, stream=True, stream_tool_calls=True, stream_response=True):
+    async for chunk in await agent.run(input_, stream=True, stream_tool_calls=True, stream_response=True, caching=False):
         if isinstance(chunk, str):
             output += chunk
         else:
@@ -222,22 +222,35 @@ async def test_stream_tool_calls():
 
 @pytest.mark.asyncio
 async def test_stream_tool_calls_with_delimiters():
-    agent = Agent(
-        instructions="You are an expert calculator. You always use the calculator to answer questions.",
-        temperature=0.0,
-        tools=[calculator],
+    instructions = dedent(
+        """\
+        # RULES YOU MUST FOLLOW
+        - You always use the calculator to answer questions. 
+        - You always generate two calculator tool calls in your response.
+        - You answer with a comma separated list of numbers.
+        """
     )
-    input_ = "What is 2 + 2?"
+    agent = Agent(
+        instructions=instructions,
+        tools=[calculator],
+        # model="anthropic/claude-3-5-sonnet-20240620",
+        temperature=0.0,
+    )
+    input_ = "What is 2 + 2 and what is 4 * 4?"
     chunks = []
-    async for chunk in await agent.run(input_, stream=True, stream_delimiters=True):
+    litellm._turn_on_debug()
+    async for chunk in await agent.run(input_, stream=True, stream_tokens=True, stream_delimiters=True, caching=False):
         chunks.append(chunk)
-    assert len(chunks) == 6
     assert chunks[0].delimiter == Delimiter.ASSISTANT_START
     assert chunks[1].delimiter == Delimiter.ASSISTANT_END
     assert chunks[2].delimiter == Delimiter.TOOL_CALL
-    assert chunks[3].delimiter == Delimiter.ASSISTANT_START
-    assert chunks[4] == "2 + 2 = 4"
-    assert chunks[5].delimiter == Delimiter.ASSISTANT_END
+    assert chunks[3].delimiter == Delimiter.TOOL_CALL
+    assert chunks[4].delimiter == Delimiter.ASSISTANT_START
+    assert chunks[5] == "4"
+    assert chunks[6] == ","
+    assert chunks[7] == " "
+    assert chunks[8] == "16"
+    assert chunks[9].delimiter == Delimiter.ASSISTANT_END
 
 
 @pytest.mark.asyncio
@@ -430,7 +443,8 @@ async def test_image_url_input_():
 @pytest.mark.asyncio
 async def test_agent_handoff_off():
     calc_agent = Agent(
-        instructions="You always answer 3 to all questions, even if it is wrong.",
+        name="calc_agent",
+        instructions="You always answer 3 (verbatim) to all questions, even if it is wrong.",
         temperature=0.0,
     )
     def calculator(expression: str) -> int:
@@ -442,8 +456,9 @@ async def test_agent_handoff_off():
         temperature=0.0,
         tools=[calculator],
     )
-    value = await agent("What is 2 + 2?")
-    assert value == "2 + 2 is 3."
+    response = await agent.run("What is 2 + 2?")
+    assert response.memory_delta[-1]["sender"] == "Agent"
+    assert response.value == "According to my calculator, 2 + 2 equals 3. If you need further calculations, let me know!"
 
 
 @pytest.mark.asyncio
@@ -573,19 +588,21 @@ async def test_log_debug_stream_basic():
         )
         config.debug_log_streaming_deltas = True
         try:
-            async for _ in await agent("What is 2 + 2?", stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True):
+            async for _ in await agent("What is 2 + 2?", stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True, caching=False):
                 pass
         finally:
             config.debug_log_streaming_deltas = False
-        async for _ in await agent("What is 2 + 2?", stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True):
+        async for _ in await agent("What is 2 + 2?", stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True, caching=False):
             pass
     log = log_buffer.getvalue()
-    # print("Log captured:\n" + log)
+    print("Log captured:\n" + log)
     expected_log = dedent(
         """\
         DEBUG | slimagents.Agent | Run XXXXXX-0: Starting run with input(s): ('What is 2 + 2?',)
         DEBUG | slimagents.Agent | Run XXXXXX-0: Getting chat completion for: [{'role': 'system', 'content': 'You always answer YES verbatim to all questions.'}, {'role': 'user', 'content': 'What is 2 + 2?'}]
-        DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'content': 'YES', 'role': 'assistant', 'function_call': None, 'tool_calls': None, 'audio': None}
+        DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'refusal': None, 'content': 'YES', 'role': 'assistant', 'function_call': None, 'tool_calls': None, 'audio': None}
+        DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'content': None, 'role': None, 'function_call': None, 'tool_calls': None, 'audio': None}
+        DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'content': None, 'role': None, 'function_call': None, 'tool_calls': None, 'audio': None}
         DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'content': None, 'role': None, 'function_call': None, 'tool_calls': None, 'audio': None}
         DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Received completion: {'content': 'YES', 'sender': 'Agent', 'role': 'assistant', 'function_call': None, 'tool_calls': None}
         DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Run completed with value YES
