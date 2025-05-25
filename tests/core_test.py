@@ -570,9 +570,7 @@ async def test_log_debug_tool_call():
         DEBUG | slimagents.Agent | Run XXXXXX-0: Getting chat completion for: [{'role': 'system', 'content': "You don't know math, but you have a calculator that you rely on."}, {'role': 'user', 'content': 'What is 2 + 2?'}]
         DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Received completion: {'content': None, 'role': 'assistant', 'tool_calls': [{'function': {'arguments': '{"expression":"2 + 2"}', 'name': 'calculator'}, 'id': 'call_XXXX', 'type': 'function'}], 'function_call': None, 'annotations': [], 'sender': 'Agent'}
         DEBUG | slimagents.Agent | Run XXXXXX-0: Processing tool call 'calculator' (id: 'call_XXXX') with arguments {'expression': '2 + 2'}
-        INFO | slimagents.Agent | Run XXXXXX-0: Async tool call found: 'calculator' (id: 'call_XXXX')
-        INFO | slimagents.Agent | Run XXXXXX-0: Processing 1 async tool call(s)
-        DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Async tool call 'calculator' (id: 'call_XXXX') returned ToolResult(value=4, agent=None, is_final_answer=True, handoff=False)
+        DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Tool call 'calculator' (id: 'call_XXXX') returned ToolResult(value=4, agent=None, is_final_answer=True, handoff=False)
         DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Run completed due to final answer reached in tool call: 4
         """
     )

@@ -116,7 +116,8 @@ class Agent:
         self.__json_tools = None
         self.__json_response_format = None
         self.__all_chat_completion_params = None
-        
+        self.__function_map = None
+
     @property 
     def name(self):
         return self._name
@@ -160,6 +161,7 @@ class Agent:
         if value != self._tools:
             self.__all_chat_completion_params = None
             self.__json_tools = None
+            self.__function_map = None
             self._tools = value 
 
     @property
@@ -208,6 +210,27 @@ class Agent:
             self.__all_chat_completion_params = None
             self._lite_llm_args = value
 
+    
+    def __get_function_map(self):
+        if self.__function_map is not None and self.__tools == self.tools:
+            # Use cached function map
+            return self.__function_map
+        
+        def sync_wrapper(f):
+            """Wraps a synchronous function in an async function."""
+            async def wrapper(*args, **kwargs):
+                return f(*args, **kwargs)
+            return wrapper
+        
+        function_map = {}
+        for f in self.tools:
+            if inspect.iscoroutinefunction(f):
+                function_map[f.__name__] = f
+            else:
+                function_map[f.__name__] = sync_wrapper(f)
+        self.__function_map = function_map
+        return function_map
+
 
     def __get_all_chat_completion_params(self):
         if self.__all_chat_completion_params is not None:
@@ -243,6 +266,7 @@ class Agent:
             })
         if self.__json_response_format:
             params["response_format"] = self.__json_response_format
+        self.__all_chat_completion_params = params
         return params
 
 
@@ -341,65 +365,49 @@ class Agent:
             memory_delta: list[dict],
             caching: bool,
     ) -> HandleToolCallResult:
-        function_map = {f.__name__: f for f in self.tools}
+        function_map = self.__get_function_map()
         partial_response = HandleToolCallResult(messages=[], agent=None, filtered_tool_calls=[])
 
-        async_tasks = []
-        for tool_call in tool_calls:
-            function = tool_call["function"]
-            name = function["name"]
-            tool_id = tool_call["id"]
-            if name not in function_map:
-                self.logger.warning("Run %s-%d: Tool '%s' (id: '%s') not found in function map.", run_id, turn, name, tool_id)
-                self._update_partial_response(partial_response, tool_call, ToolResult(value=f"Error: Tool {name} not found."))
-                continue            
-            
-            args = json.loads(function["arguments"])
-
-            func = function_map[name]
-            
+        async def tool_call_wrapper(tool_call_task):
             if self.logger.getEffectiveLevel() <= logging.DEBUG:
                 self.logger.debug("Run %s-%d: Processing tool call '%s' (id: '%s') with arguments %s", run_id, turn, name, tool_id, args)
             else:
                 self.logger.info("Run %s-%d: Processing tool call '%s' (id: '%s')", run_id, turn, name, tool_id)
             t0 = time.time()
-            raw_result = func(**args)
+            ret = await tool_call_task
             delta_t = time.time() - t0
-            if inspect.iscoroutine(raw_result):
-                # Store coroutine with its metadata for parallel execution
-                self.logger.info("Run %s-%d: Async tool call found: '%s' (id: '%s')", run_id, turn, name, tool_id)
-                async def tool_call_wrapper(raw_result):
-                    t0 = time.time()
-                    ret = await raw_result
-                    delta_t = time.time() - t0
-                    if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                        self.logger.debug("Run %s-%d: (After %.2f s) Async tool call '%s' (id: '%s') returned %s", run_id, turn, delta_t, name, tool_id, ret)
-                    else:
-                        self.logger.info("Run %s-%d: (After %.2f s) Async tool call '%s' (id: '%s') returned successfully", run_id, turn, delta_t, name, tool_id)
-                    return ret
-                async_tasks.append((tool_call, tool_call_wrapper(raw_result)))
+            if self.logger.getEffectiveLevel() <= logging.DEBUG:
+                self.logger.debug("Run %s-%d: (After %.2f s) Tool call '%s' (id: '%s') returned %s", run_id, turn, delta_t, name, tool_id, ret)
             else:
-                # Handle synchronous results immediately
-                if self.logger.getEffectiveLevel() <= logging.DEBUG:
-                    self.logger.debug("Run %s-%d: (After %.2f s) Tool call '%s' (id: '%s') returned %s", run_id, turn, delta_t, name, tool_id, raw_result)
-                else:
-                    self.logger.info("Run %s-%d: (After %.2f s) Tool call '%s' (id: '%s') returned successfully", run_id, turn, delta_t, name, tool_id)
-                result = await self._handle_function_result(run_id, raw_result, memory, memory_delta, caching)
-                self._update_partial_response(partial_response, tool_call, result)
+                self.logger.info("Run %s-%d: (After %.2f s) Tool call '%s' (id: '%s') returned successfully", run_id, turn, delta_t, name, tool_id)
+            return ret
+    
+        tool_call_tasks = []
+        for tool_call in tool_calls:
+            function = tool_call["function"]
+            name = function["name"]
+            tool_id = tool_call["id"]
+
+            if name not in function_map:
+                self.logger.warning("Run %s-%d: Tool '%s' (id: '%s') not found in function map.", run_id, turn, name, tool_id)
+                self._update_partial_response(partial_response, tool_call, ToolResult(value=f"Error: Tool {name} not found."))
+                continue
+            
+            args = json.loads(function["arguments"])
+            func = function_map[name]
+            tool_call_task = func(**args)
+            tool_call_tasks.append(tool_call_wrapper(tool_call_task))
+
+        # Execute tool call tasks in parallel if any exist
+        if tool_call_tasks:
+            raw_results = await asyncio.gather(*tool_call_tasks)
+            for tool_call, raw_result in zip(tool_calls, raw_results):
+                tool_call_result = await self._handle_function_result(run_id, raw_result, memory, memory_delta, caching)
+                self._update_partial_response(partial_response, tool_call, tool_call_result)
                 if partial_response.result:
                     break
 
-        # Execute async tasks in parallel if any exist
-        if async_tasks:
-            self.logger.info("Run %s-%d: Processing %d async tool call(s)", run_id, turn, len(async_tasks))
-            raw_results = await asyncio.gather(*(task[1] for task in async_tasks))
-            for (tool_call, _), raw_result in zip(async_tasks, raw_results):
-                result = await self._handle_function_result(run_id, raw_result, memory, memory_delta, caching)
-                self._update_partial_response(partial_response, tool_call, result)
-                if partial_response.result:
-                    break
-
-        # TODO: Cancel all pending async tasks if the result is a final answer
+        # TODO: Cancel all pending async tasks as soon as one task returns a final answer
 
         return partial_response
 
