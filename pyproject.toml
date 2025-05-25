@@ -14,7 +14,7 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = [
-    "litellm>=1.69.2",
+    "litellm>=1.71.0",
     "pydantic>=2.0.0",
     "jsonref>=1.1.0",
 ]
