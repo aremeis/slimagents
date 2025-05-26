@@ -18,7 +18,7 @@ import logging
 import io
 from contextlib import contextmanager
 
-from slimagents.core import Delimiter, ToolResult
+from slimagents.core import DelimiterType, ToolResult
 # Set caching configuration
 config.caching = True
 litellm.cache = Cache(type="disk", disk_cache_dir="./tests/llm_cache")
@@ -110,9 +110,9 @@ async def test_stream_response():
     chunks = []
     async for chunk in await agent(input_, stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True, caching=False):
         chunks.append(chunk)
-    assert chunks[0].delimiter == Delimiter.ASSISTANT_START
+    assert chunks[0].delimiter == DelimiterType.ASSISTANT_START
     assert chunks[1]["content"] == "YES"
-    assert chunks[2].delimiter == Delimiter.ASSISTANT_END
+    assert chunks[2].delimiter == DelimiterType.ASSISTANT_END
     response = chunks[3]
     assert response.value == "YES"
     assert len(response.memory_delta) == 2
@@ -241,16 +241,16 @@ async def test_stream_tool_calls_with_delimiters():
     litellm._turn_on_debug()
     async for chunk in await agent.run(input_, stream=True, stream_tokens=True, stream_delimiters=True, caching=False):
         chunks.append(chunk)
-    assert chunks[0].delimiter == Delimiter.ASSISTANT_START
-    assert chunks[1].delimiter == Delimiter.ASSISTANT_END
-    assert chunks[2].delimiter == Delimiter.TOOL_CALL
-    assert chunks[3].delimiter == Delimiter.TOOL_CALL
-    assert chunks[4].delimiter == Delimiter.ASSISTANT_START
+    assert chunks[0].delimiter == DelimiterType.ASSISTANT_START
+    assert chunks[1].delimiter == DelimiterType.ASSISTANT_END
+    assert chunks[2].delimiter == DelimiterType.TOOL_CALL
+    assert chunks[3].delimiter == DelimiterType.TOOL_CALL
+    assert chunks[4].delimiter == DelimiterType.ASSISTANT_START
     assert chunks[5] == "4"
     assert chunks[6] == ","
     assert chunks[7] == " "
     assert chunks[8] == "16"
-    assert chunks[9].delimiter == Delimiter.ASSISTANT_END
+    assert chunks[9].delimiter == DelimiterType.ASSISTANT_END
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,7 @@ import logging
 
 # Package/library imports
 from litellm import acompletion
-from litellm.types.completion import ChatCompletionMessageToolCallParam, Function
+from litellm.types.completion import ChatCompletionMessageToolCallParam
 from pydantic import AnyUrl, BaseModel
 
 # Local imports
@@ -26,8 +26,16 @@ AgentFunction = Callable[..., Union[str, "Agent", dict, Coroutine[Any, Any, Unio
 
 @dataclass
 class Response():
+    """
+    Represents a response from an agent.
+
+    Attributes:
+        value (Any): The response value, which can be of any type depending on the response_format.
+        memory_delta (list[dict]): The list of messages that were added to the memory during this response.
+        agent (Agent): The agent instance that generated this response.
+    """
     value: Any
-    memory_delta: list
+    memory_delta: list[dict]
     agent: "Agent"
 
 @dataclass
@@ -50,12 +58,21 @@ class ToolResult():
 
 @dataclass
 class HandleToolCallResult():
-    messages: list
+    """
+    Represents the result of handling tool calls in an agent.
+
+    Attributes:
+        messages (list[dict]): List of messages generated during tool call handling.
+        agent (Optional[Agent]): The agent instance, if a handoff occurred.
+        filtered_tool_calls (list[ChatCompletionMessageToolCallParam]): List of tool calls that were processed.
+        result (Optional[ToolResult]): The final result of the tool call handling, if any.
+    """
+    messages: list[dict]
     agent: Optional["Agent"] = None
     filtered_tool_calls: list[ChatCompletionMessageToolCallParam] = field(default_factory=list)
     result: Optional[ToolResult] = None
 
-class Delimiter(Enum):
+class DelimiterType(Enum):
     ASSISTANT_START = "assistant_start"
     ASSISTANT_END = "assistant_end"
     TOOL_CALL = "tool_call"
@@ -63,9 +80,13 @@ class Delimiter(Enum):
 @dataclass
 class MessageDelimiter():
     """
-    A delimiter for the message stream.
+    A delimiter for the message stream that marks special events in the conversation flow.
+
+    Attributes:
+        delimiter_type (DelimiterType): The type of delimiter (ASSISTANT_START, ASSISTANT_END, or TOOL_CALL).
+        message (dict): The associated message data for this delimiter event.
     """
-    delimiter: Delimiter
+    delimiter_type: DelimiterType
     message: dict
 
 # Agent class
@@ -73,6 +94,15 @@ class MessageDelimiter():
 DEFAULT_MODEL = "gpt-4.1"
 
 class Agent:
+    """
+    A conversational agent that can process inputs, use tools, and generate responses.
+
+    The agent maintains a conversation history (memory) and can use various tools to process
+    inputs and generate responses. It supports streaming responses, tool calls, and agent handoffs.
+
+    Attributes:
+        logger (logging.Logger): Logger instance for the agent.
+    """
 
     logger = config.agent_logger.getChild("Agent")
 
@@ -90,6 +120,22 @@ class Agent:
             logger: Optional[logging.Logger] = None,
             **lite_llm_args
     ):
+        """
+        Initialize a new Agent instance.
+
+        Args:
+            name (Optional[str]): Name of the agent. Defaults to class name.
+            model (Optional[str]): LLM model to use. Defaults to DEFAULT_MODEL.
+            instructions (Optional[Union[str, Callable[[], str]]]): System instructions or a callable that returns them.
+            memory (Optional[list[dict]]): Initial conversation memory.
+            tools (Optional[list[AgentFunction]]): List of functions the agent can use.
+            tool_choice (Optional[Union[str, dict]]): Control over tool selection.
+            parallel_tool_calls (Optional[bool]): Whether to allow parallel tool calls.
+            response_format (Optional[Union[dict, type[BaseModel]]]): Format for response parsing.
+            temperature (Optional[float]): Temperature for response generation.
+            logger (Optional[logging.Logger]): Custom logger instance.
+            **lite_llm_args: Additional arguments passed to the LLM.
+        """
         self._name = name or self.__class__.__name__
         self._model = model or DEFAULT_MODEL
         self._instructions = instructions
@@ -534,7 +580,7 @@ class Agent:
             completion = await active_agent._get_chat_completion(run_id, turns, memory, memory_delta, stream=True, caching=caching)
 
             if stream_delimiters:
-                yield MessageDelimiter(delimiter=Delimiter.ASSISTANT_START, message=message)
+                yield MessageDelimiter(delimiter_type=DelimiterType.ASSISTANT_START, message=message)
 
             async for chunk in completion:
                 delta = chunk.choices[0].delta.model_dump()
@@ -559,15 +605,13 @@ class Agent:
                 delta.pop("sender", None)
                 merge_chunk(message, delta)
             
-            if stream_delimiters:
-                yield MessageDelimiter(delimiter=Delimiter.ASSISTANT_END, message=message)
-
-            message["tool_calls"] = list(
-                message.get("tool_calls", {}).values())
-            if not message["tool_calls"]:
-                message["tool_calls"] = None
+            # Convert tool calls dictionary to list (or None if empty)
+            message["tool_calls"] = list(message.get("tool_calls", {}).values()) or None
 
             active_agent._log_completion(run_id, turns, t0, message)
+
+            if stream_delimiters:
+                yield MessageDelimiter(delimiter_type=DelimiterType.ASSISTANT_END, message=message)
 
             if not message["tool_calls"] or not execute_tools:
                 memory_delta.append(message)
@@ -578,7 +622,7 @@ class Agent:
             async for tool_call, result in active_agent._handle_tool_calls(run_id, turns, message["tool_calls"], memory, memory_delta, caching):
                 tool_message = active_agent._update_partial_response(partial_response, tool_call, result)
                 if stream_delimiters:
-                    yield MessageDelimiter(delimiter=Delimiter.TOOL_CALL, message=tool_message)
+                    yield MessageDelimiter(delimiter_type=DelimiterType.TOOL_CALL, message=tool_message)
                 if partial_response.result:
                     break
             
@@ -666,6 +710,31 @@ class Agent:
             execute_tools: Optional[bool] = True,
             caching: Optional[bool] = None,
     ) -> Response | AsyncGenerator[Response, None]:
+        """
+        Run the agent with the given inputs and return a response.
+
+        This is the main method for interacting with the agent. It processes inputs,
+        maintains conversation history, and can stream responses in various formats.
+
+        Args:
+            *inputs: Variable length input arguments to process.
+            memory (Optional[list[dict]]): Conversation history to use. Defaults to empty list.
+            memory_delta (Optional[list[dict]]): Additional messages to add to memory. Must be empty if provided.
+            stream (Optional[bool]): Whether to stream the response. Defaults to False.
+            stream_tokens (bool): Whether to stream individual tokens. Defaults to True.
+            stream_delimiters (bool): Whether to stream message delimiters. Defaults to False.
+            stream_tool_calls (bool): Whether to stream tool calls. Defaults to False.
+            stream_response (bool): Whether to stream the final response. Defaults to False.
+            max_turns (Optional[int]): Maximum number of conversation turns. Defaults to infinity.
+            execute_tools (Optional[bool]): Whether to execute tool calls. Defaults to True.
+            caching (Optional[bool]): Whether to use response caching. Defaults to config.caching.
+
+        Returns:
+            Union[Response, AsyncGenerator[Response, None]]: The response or a generator of response chunks if streaming.
+
+        Raises:
+            ValueError: If memory_delta is provided and not empty.
+        """
         if memory is None:
             memory = []
         if caching is None:
@@ -724,6 +793,31 @@ class Agent:
             execute_tools: bool = True,
             caching: bool = None,
     ) -> Response:
+        """
+        Synchronously run the agent with the given inputs and return a response.
+
+        This is a synchronous wrapper around the async run method. It creates a new event loop
+        if one doesn't exist and runs the agent in that loop.
+
+        Args:
+            *inputs: Variable length input arguments to process.
+            memory (Optional[list[dict]]): Conversation history to use. Defaults to empty list.
+            memory_delta (Optional[list[dict]]): Additional messages to add to memory. Must be empty if provided.
+            stream (bool): Whether to stream the response. Defaults to False.
+            stream_tokens (bool): Whether to stream actual tokens instead of delta chunks. Defaults to True.
+            stream_delimiters (bool): Whether to stream message delimiters. Defaults to False.
+            stream_tool_calls (bool): Whether to stream tool call delta chunks. Defaults to False.
+            stream_response (bool): Whether to stream the final response object. Defaults to False.
+            max_turns (int): Maximum number of conversation turns. Defaults to infinity.
+            execute_tools (bool): Whether to execute tool calls. Defaults to True.
+            caching (bool): Whether to use response caching. Defaults to config.caching.
+
+        Returns:
+            Response: The response from the agent.
+
+        Raises:
+            ValueError: If memory_delta is provided and not empty.
+        """
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -763,6 +857,28 @@ class Agent:
     ) -> Response:
         """
         Synchronously apply the agent to the inputs and return the response value.
+
+        This is a convenience method that wraps run_sync and returns just the response value.
+        It's useful for simple synchronous interactions with the agent.
+
+        Args:
+            *inputs: Variable length input arguments to process.
+            memory (Optional[list[dict]]): Conversation history to use. Defaults to empty list.
+            memory_delta (Optional[list[dict]]): Messages generated by the agent will be added to this list. Must be empty if provided.
+            stream (bool): Whether to stream the response. Defaults to False.
+            stream_tokens (bool): Whether to stream actual tokens instead of delta chunks. Defaults to True.
+            stream_delimiters (bool): Whether to stream message delimiters. Defaults to False.
+            stream_tool_calls (bool): Whether to stream tool call delta chunks. Defaults to False.
+            stream_response (bool): Whether to stream the final response object. Defaults to False.
+            max_turns (int): Maximum number of conversation turns. Defaults to infinity.
+            execute_tools (bool): Whether to execute tool calls. Defaults to True.
+            caching (bool): Whether to use response caching. Defaults to config.caching.
+
+        Returns:
+            Response: The response value from the agent.
+
+        Raises:
+            ValueError: If memory_delta is provided and not empty.
         """
         response = self.run_sync(
             *inputs,
@@ -799,6 +915,28 @@ class Agent:
     ) -> Response:
         """
         Asynchronously apply the agent to the inputs and return the response value.
+
+        This method allows the agent to be called like a function, making it easy to use
+        in async contexts. It wraps the run method and returns just the response value.
+
+        Args:
+            *inputs: Variable length input arguments to process.
+            memory (Optional[list[dict]]): Conversation history to use. Defaults to empty list.
+            memory_delta (Optional[list[dict]]): Messages generated by the agent will be added to this list. Must be empty if provided.
+            stream (Optional[bool]): Whether to stream the response. Defaults to False.
+            stream_tokens (bool): Whether to stream actual tokens instead of delta chunks. Defaults to True.
+            stream_delimiters (bool): Whether to stream message delimiters. Defaults to False.
+            stream_tool_calls (bool): Whether to stream tool call delta chunks. Defaults to False.
+            stream_response (bool): Whether to stream the final response object. Defaults to False.
+            max_turns (Optional[int]): Maximum number of conversation turns. Defaults to infinity.
+            execute_tools (Optional[bool]): Whether to execute tool calls. Defaults to True.
+            caching (Optional[bool]): Whether to use response caching. Defaults to config.caching.
+
+        Returns:
+            Response: The response value from the agent.
+
+        Raises:
+            ValueError: If memory_delta is provided and not empty.
         """
         response = await self.run(
             *inputs,
@@ -819,4 +957,4 @@ class Agent:
             return response.value
         
 
-__all__ = ["Agent", "Response", "ToolResult", "MessageDelimiter", "Delimiter"]
+__all__ = ["Agent", "Response", "ToolResult", "MessageDelimiter", "DelimiterType"]
