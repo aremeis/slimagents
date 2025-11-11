@@ -278,3 +278,15 @@ WIP
 ### Handoff vs tool call
 
 WIP
+
+
+### For development
+
+```shell
+source .venv/bin/activate
+pip install -e .
+```
+Run tests:
+```shell
+python -m pytest
+```

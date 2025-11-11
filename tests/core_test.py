@@ -18,7 +18,7 @@ import logging
 import io
 from contextlib import contextmanager
 
-from slimagents.core import DelimiterType, ToolResult
+from slimagents.core import DelimiterType, FileContent, ToolResult
 # Set caching configuration
 config.caching = True
 litellm.cache = Cache(type="disk", disk_cache_dir="./tests/llm_cache")
@@ -110,9 +110,9 @@ async def test_stream_response():
     chunks = []
     async for chunk in await agent(input_, stream=True, stream_tokens=False, stream_delimiters=True, stream_response=True, caching=False):
         chunks.append(chunk)
-    assert chunks[0].delimiter == DelimiterType.ASSISTANT_START
+    assert chunks[0].delimiter_type == DelimiterType.ASSISTANT_START
     assert chunks[1]["content"] == "YES"
-    assert chunks[2].delimiter == DelimiterType.ASSISTANT_END
+    assert chunks[2].delimiter_type == DelimiterType.ASSISTANT_END
     response = chunks[3]
     assert response.value == "YES"
     assert len(response.memory_delta) == 2
@@ -241,16 +241,16 @@ async def test_stream_tool_calls_with_delimiters():
     litellm._turn_on_debug()
     async for chunk in await agent.run(input_, stream=True, stream_tokens=True, stream_delimiters=True, caching=False):
         chunks.append(chunk)
-    assert chunks[0].delimiter == DelimiterType.ASSISTANT_START
-    assert chunks[1].delimiter == DelimiterType.ASSISTANT_END
-    assert chunks[2].delimiter == DelimiterType.TOOL_CALL
-    assert chunks[3].delimiter == DelimiterType.TOOL_CALL
-    assert chunks[4].delimiter == DelimiterType.ASSISTANT_START
+    assert chunks[0].delimiter_type == DelimiterType.ASSISTANT_START
+    assert chunks[1].delimiter_type == DelimiterType.ASSISTANT_END
+    assert chunks[2].delimiter_type == DelimiterType.TOOL_CALL
+    assert chunks[3].delimiter_type == DelimiterType.TOOL_CALL
+    assert chunks[4].delimiter_type == DelimiterType.ASSISTANT_START
     assert chunks[5] == "4"
     assert chunks[6] == ","
     assert chunks[7] == " "
     assert chunks[8] == "16"
-    assert chunks[9].delimiter == DelimiterType.ASSISTANT_END
+    assert chunks[9].delimiter_type == DelimiterType.ASSISTANT_END
 
 
 @pytest.mark.asyncio
@@ -396,7 +396,7 @@ async def test_file_input_():
     # Vertex AI
 
     init_vertex_ai()
-    ocr.model = "vertex_ai/gemini-1.5-flash"
+    ocr.model = "vertex_ai/gemini-2.0-flash"
     with open("tests/ocr_test.pdf", "rb") as f:
         value = await ocr(f)
         assert "42" in value
@@ -406,7 +406,7 @@ async def test_file_input_():
 
     # Gemini
 
-    ocr.model = "gemini/gemini-1.5-flash"
+    ocr.model = "gemini/gemini-2.0-flash"
     with open("tests/ocr_test.pdf", "rb") as f:
         value = await ocr(f)
         assert "42" in value
@@ -417,6 +417,14 @@ async def test_file_input_():
     # value = await ocr(url)
     # assert "42" in value
 
+    # Gemini 2.0 Flash with file content
+    file_content = FileContent(
+        content=content,
+        filename="ocr_test.pdf",
+        # mime_type="application/pdf",
+    )
+    value = await ocr(file_content)
+    assert "42" in value
 
 @pytest.mark.asyncio
 async def test_image_url_input_():
@@ -435,7 +443,7 @@ async def test_image_url_input_():
     value = await ocr(url)
     assert "42" in value
 
-    ocr.model = "gemini/gemini-1.5-flash"
+    ocr.model = "gemini/gemini-2.0-flash"
     value = await ocr(url)
     assert "42" in value
 
@@ -599,7 +607,6 @@ async def test_log_debug_stream_basic():
         DEBUG | slimagents.Agent | Run XXXXXX-0: Starting run with input(s): ('What is 2 + 2?',)
         DEBUG | slimagents.Agent | Run XXXXXX-0: Getting chat completion for: [{'role': 'system', 'content': 'You always answer YES verbatim to all questions.'}, {'role': 'user', 'content': 'What is 2 + 2?'}]
         DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'refusal': None, 'content': 'YES', 'role': 'assistant', 'function_call': None, 'tool_calls': None, 'audio': None}
-        DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'content': None, 'role': None, 'function_call': None, 'tool_calls': None, 'audio': None}
         DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'content': None, 'role': None, 'function_call': None, 'tool_calls': None, 'audio': None}
         DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'content': None, 'role': None, 'function_call': None, 'tool_calls': None, 'audio': None}
         DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Received completion: {'content': 'YES', 'sender': 'Agent', 'role': 'assistant', 'function_call': None, 'tool_calls': None}

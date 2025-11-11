@@ -34,7 +34,8 @@ agent = Agent(
 )
 
 
-run_demo_loop(agent)
+if __name__ == "__main__":
+    run_demo_loop(agent)
 
 # First question:
 # Is the sky blue?

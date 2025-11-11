@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import json
 from collections import defaultdict
+import mimetypes
 import random
 import string
 import time
@@ -88,6 +89,20 @@ class MessageDelimiter():
     """
     delimiter_type: DelimiterType
     message: dict
+
+@dataclass
+class FileContent():
+    """
+    Represents the content of a file.
+
+    Attributes:
+        content (bytes): The content of the file.
+        filename (Optional[str]): The name of the file.
+        mime_type (Optional[str]): The MIME type of the file.
+    """
+    content: bytes
+    filename: Optional[str] = None
+    mime_type: Optional[str] = None
 
 # Agent class
 
@@ -470,7 +485,7 @@ class Agent:
         
 
     def _get_response(self, run_id: str, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict]):
-        memory.extend(memory_delta)
+        memory.extend(memory_delta) # FIXME? Is this really a good idea? 
         value = self._get_value(memory[-1]["content"])
         t_run_delta = time.time() - t0_run
         if self.logger.getEffectiveLevel() <= logging.DEBUG:
@@ -501,26 +516,39 @@ class Agent:
                         "url": str(input),
                     },
                 }
+            elif isinstance(input, FileContent):
+                file_name = input.filename or None
+                mime_type = input.mime_type
+                content = input.content
+            elif hasattr(input, 'read'):  # is file-like object
+                file_name = input.name or None
+                mime_type = None
+                content = input.read()
+            elif isinstance(input, bytes):
+                # file_name = "temp_file"
+                # mime_type = get_mime_type_from_content(input)
+                file_name = None
+                mime_type = None
+                content = input
             else:
-                if hasattr(input, 'read'):  # is file-like object
-                    file_name = input.name if input.name else None
-                    mime_type = get_mime_type_from_file_like_object(input, file_name)
-                    file_name = file_name or "temp_file"
-                    content = input.read()
-                elif isinstance(input, bytes):
-                    file_name = "temp_file"
-                    mime_type = get_mime_type_from_content(input)
-                    content = input
-                else:
-                    raise ValueError(f"Unsupported element type: {type(input)}")
-                base64_content = base64.b64encode(content).decode('utf-8')
-                return {
-                    "type": "file",
-                    "file": {
-                        "filename": file_name,
-                        "file_data": f"data:{mime_type};base64,{base64_content}",
-                    },
-                }
+                raise ValueError(f"Unsupported element type: {type(input)}")
+ 
+            if not mime_type and file_name:
+                # Try to guess the MIME type from the file name
+                mime_type, _ = mimetypes.guess_type(file_name)
+            if not mime_type:
+                # MIME type still not set, try to guess the MIME type from the content
+                mime_type = get_mime_type_from_content(content[:2048])
+            if not file_name:
+                file_name = "temp_file"
+            base64_content = base64.b64encode(content).decode('utf-8')
+            return {
+                "type": "file",
+                "file": {
+                    "filename": file_name,
+                    "file_data": f"data:{mime_type};base64,{base64_content}",
+                },
+            }
 
         if len(inputs) == 1 and isinstance(inputs[0], str):
             # Keep it simple if there's only one string input
