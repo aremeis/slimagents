@@ -189,6 +189,13 @@ async def test_tool_calls():
     assert response.memory_delta[2]["role"] == "tool"
     assert response.memory_delta[2]["content"] == "4"
     assert response.memory_delta[3]["role"] == "assistant"
+    assert response.metadata is not None
+    assert response.metadata.input_tokens > 0
+    assert response.metadata.output_tokens > 0
+    assert response.metadata.total_tokens == response.metadata.input_tokens + response.metadata.output_tokens
+    assert response.metadata.cost > 0
+    assert len(response.metadata.litellm_usage) == 2
+    assert len(response.metadata.litellm_hidden_params) == 2
 
 
 @pytest.mark.asyncio
@@ -218,6 +225,13 @@ async def test_stream_tool_calls():
     assert response.memory_delta[2]["content"] == "4"
     assert response.memory_delta[3]["role"] == "assistant"
     assert response.memory_delta[3]["content"] == output
+    assert response.metadata is not None
+    assert response.metadata.input_tokens > 0
+    assert response.metadata.output_tokens > 0
+    assert response.metadata.total_tokens == response.metadata.input_tokens + response.metadata.output_tokens
+    # assert response.metadata.cost > 0
+    assert len(response.metadata.litellm_usage) == 2
+    assert len(response.metadata.litellm_hidden_params) == 2
 
 
 @pytest.mark.asyncio

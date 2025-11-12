@@ -14,7 +14,7 @@ import asyncio
 import logging
 
 # Package/library imports
-from litellm import acompletion
+from litellm import Usage, acompletion
 from litellm.types.completion import ChatCompletionMessageToolCallParam
 from pydantic import AnyUrl, BaseModel
 
@@ -26,6 +26,26 @@ import slimagents.config as config
 AgentFunction = Callable[..., Union[str, "Agent", dict, Coroutine[Any, Any, Union[str, "Agent", dict]]]]
 
 @dataclass
+class ResponseMetadata():
+    """
+    Represents metadata about a response from an agent.
+
+    Attributes:
+        cost (Optional[float]): The total cost of the response.
+        input_tokens (Optional[int]): The total number of input tokens used in the response.
+        output_tokens (Optional[int]): The total number of output tokens used in the response.
+        total_tokens (Optional[int]): The total number of tokens used in the response.
+        litellm_usage (Optional[list[Usage]]): Additional usage information about the response as provided by litellm for each turn of the response.
+        litellm_hidden_params (Optional[list[dict]]): Additional metadata about the response as provided by litellm for each turn of the response.
+    """
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    cost: Optional[float] = None
+    litellm_usage: Optional[list[Usage]] = None
+    litellm_hidden_params: Optional[list[dict]] = None
+
+@dataclass
 class Response():
     """
     Represents a response from an agent.
@@ -34,10 +54,12 @@ class Response():
         value (Any): The response value, which can be of any type depending on the response_format.
         memory_delta (list[dict]): The list of messages that were added to the memory during this response.
         agent (Agent): The agent instance that generated this response.
+        metadata (Optional[ResponseMetadata]): Additional metadata about the response.
     """
     value: Any
     memory_delta: list[dict]
     agent: "Agent"
+    metadata: Optional[ResponseMetadata] = None
 
 @dataclass
 class ToolResult():
@@ -351,6 +373,8 @@ class Agent:
         create_params["messages"] = messages
         create_params["stream"] = stream
         create_params["caching"] = caching
+        if stream:
+            create_params["stream_options"] = {"include_usage": True}
         return await acompletion(**create_params)
 
 
@@ -465,7 +489,7 @@ class Agent:
             yield tool_call, result
 
 
-    def _handle_partial_response(self, run_id: str, turns: int, t0_run: float, partial_response: HandleToolCallResult, message: dict, memory: list[dict], memory_delta: list[dict]) -> Optional[Response]:
+    def _handle_partial_response(self, run_id: str, turns: int, t0_run: float, partial_response: HandleToolCallResult, message: dict, memory: list[dict], memory_delta: list[dict], metadata: ResponseMetadata) -> Optional[Response]:
         if partial_response.filtered_tool_calls:
             # Only add tool calls to memory if there are any left after filtering
             memory_delta.append(message)
@@ -481,10 +505,11 @@ class Agent:
                 value=partial_response.result.value,
                 memory_delta=memory_delta,
                 agent=self,
+                metadata=metadata,
             )
         
 
-    def _get_response(self, run_id: str, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict]):
+    def _get_response(self, run_id: str, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict], metadata: ResponseMetadata):
         memory.extend(memory_delta) # FIXME? Is this really a good idea? 
         value = self._get_value(memory[-1]["content"])
         t_run_delta = time.time() - t0_run
@@ -496,6 +521,7 @@ class Agent:
             value=value,
             memory_delta=memory_delta,
             agent=self,
+            metadata=metadata,
         )
 
 
@@ -570,6 +596,32 @@ class Agent:
                 self.logger.info("Run %s-%d: (After %.2f s) Received completion with text content.", run_id, turns, delta_t)
 
 
+    def _update_metadata(self, metadata: ResponseMetadata, completion: Any) -> ResponseMetadata:
+        usage = getattr(completion, "usage", None)
+        hidden_params = getattr(completion, "_hidden_params", None)
+        if usage or hidden_params:
+            metadata = metadata or ResponseMetadata()
+            if usage:
+                metadata.litellm_usage = metadata.litellm_usage or []
+                metadata.litellm_usage.append(usage)
+                prompt_tokens = getattr(usage, "prompt_tokens", 0)
+                if prompt_tokens:
+                    metadata.input_tokens = (metadata.input_tokens or 0) + prompt_tokens
+                completion_tokens = getattr(usage, "completion_tokens", 0)
+                if completion_tokens:
+                    metadata.output_tokens = (metadata.output_tokens or 0) + completion_tokens
+                total_tokens = getattr(usage, "total_tokens", 0)
+                if total_tokens:
+                    metadata.total_tokens = (metadata.total_tokens or 0) + total_tokens
+            if hidden_params:
+                metadata.litellm_hidden_params = metadata.litellm_hidden_params or []
+                metadata.litellm_hidden_params.append(hidden_params)
+                response_cost = hidden_params.get("response_cost", 0)
+                if response_cost:
+                    metadata.cost = (metadata.cost or 0) + response_cost
+        return metadata
+
+
     async def _run_and_stream(
             self,
             run_id: str,
@@ -586,6 +638,7 @@ class Agent:
         t0_run = time.time()
         active_agent = self
         turns = 0
+        metadata = None
 
         while turns < max_turns:
             active_agent._before_chat_completion()
@@ -611,6 +664,9 @@ class Agent:
                 yield MessageDelimiter(delimiter_type=DelimiterType.ASSISTANT_START, message=message)
 
             async for chunk in completion:
+                if getattr(chunk, "usage", None):
+                    metadata = self._update_metadata(metadata, chunk)
+                    continue
                 delta = chunk.choices[0].delta.model_dump()
                 if config.debug_log_streaming_deltas:
                     self.logger.debug("Run %s-%d: Received delta: %s", run_id, turns, delta)
@@ -654,7 +710,7 @@ class Agent:
                 if partial_response.result:
                     break
             
-            response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta)
+            response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta, metadata)
             if response:
                 if stream_response:
                     yield response
@@ -668,7 +724,7 @@ class Agent:
 
         memory.extend(memory_delta)
         if stream_response:
-            yield active_agent._get_response(run_id, turns, t0_run, memory, memory_delta)
+            yield active_agent._get_response(run_id, turns, t0_run, memory, memory_delta, metadata)
         else:
             active_agent.logger.info("Run %s-%d: (After %.2f s) Run completed", run_id, turns, time.time() - t0_run)
 
@@ -685,6 +741,7 @@ class Agent:
         t0_run = time.time()
         active_agent = self
         turns = 0
+        metadata = None
 
         while turns < max_turns and active_agent:
             active_agent._before_chat_completion()
@@ -693,6 +750,7 @@ class Agent:
             completion = await active_agent._get_chat_completion(run_id, turns, memory, memory_delta, caching=caching)
             message = completion.choices[0].message.model_dump()
             message["sender"] = active_agent.name
+            metadata = self._update_metadata(metadata, completion)
 
             active_agent._log_completion(run_id, turns, t0, message)
 
@@ -707,7 +765,7 @@ class Agent:
                 if partial_response.result:
                     break
             
-            response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta)
+            response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta, metadata)
             if response:
                 return response
             
@@ -716,7 +774,7 @@ class Agent:
 
             turns += 1
 
-        return active_agent._get_response(run_id, turns, t0_run, memory, memory_delta)
+        return active_agent._get_response(run_id, turns, t0_run, memory, memory_delta, metadata)
 
 
     def _get_run_id(self):
