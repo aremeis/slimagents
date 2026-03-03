@@ -1,6 +1,7 @@
 import json
 import asyncio
 import logging
+from typing import Any, AsyncGenerator, Optional
 
 from slimagents import Response
 
@@ -8,7 +9,7 @@ from slimagents.config import logger
 from slimagents.core import Agent
 
 
-async def process_and_print_streaming_response(response):
+async def process_and_print_streaming_response(response: AsyncGenerator) -> Optional[Response]:
     content = ""
     last_sender = ""
 
@@ -37,9 +38,10 @@ async def process_and_print_streaming_response(response):
         if "delim" in chunk and chunk["delim"] == "end" and content:
             print()  # End of response message
             content = ""
+    return None
 
 
-def pretty_print_messages(messages) -> None:
+def pretty_print_messages(messages: list[dict]) -> None:
     for message in messages:
         if message["role"] != "assistant":
             continue
@@ -71,17 +73,17 @@ def enable_logging(log_level: int = logging.ERROR) -> None:
     logger.setLevel(log_level)
 
 
-async def run_demo_loop_async(agent: Agent, stream=False, log_level: int = None) -> None:
+async def run_demo_loop_async(agent: Agent, stream: bool = False, log_level: Optional[int] = None) -> None:
     if log_level is not None:
         enable_logging(log_level)
 
     print("Starting SlimAgents CLI 🪶")
 
-    memory = []
+    memory: list[dict] = []
 
     while True:
         user_input = input("\033[90mUser\033[0m: ")
-        response = await agent.run(user_input, stream=stream, memory=memory, stream_response=True, stream_delimiters=True, stream_tokens=False, stream_tool_calls=True)
+        response: Any = await agent.run(user_input, stream=stream, memory=memory, stream_response=True, stream_delimiters=True, stream_tokens=False, stream_tool_calls=True)
         if stream:
             response = await process_and_print_streaming_response(response)
         else:
@@ -90,7 +92,7 @@ async def run_demo_loop_async(agent: Agent, stream=False, log_level: int = None)
         agent = response.agent
 
 
-def run_demo_loop(agent, stream=False, log_level: int = None):
+def run_demo_loop(agent: Agent, stream: bool = False, log_level: Optional[int] = None) -> None:
     """Synchronous wrapper for run_demo_loop_async"""
     try:
         loop = asyncio.get_running_loop()

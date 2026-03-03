@@ -207,7 +207,7 @@ LLM's response when the agent is done.
 
 ### Handoffs
 
-Sometimes it is useful to let one agent transfer control to another agent. This is useful when it becomes to complicated for one agent 
+Sometimes it is useful to let one agent transfer control to another agent. This is useful when it becomes too complicated for one agent 
 to encapsulate all instructions and tools to handle every request. To accomplish such handoffs, simply return an `Agent` from a tool call:
 
 ```python

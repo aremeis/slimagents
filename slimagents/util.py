@@ -1,7 +1,7 @@
 import copy
 import inspect
 import re
-from typing import Any, Generic, Optional, TypeVar, get_args, get_origin
+from typing import Any, Callable, Generic, Optional, TypeVar, get_args, get_origin
 import jsonref
 from pydantic import BaseModel
 import mimetypes
@@ -16,7 +16,7 @@ except ImportError as e:
     pass
 
 
-def merge_fields(target, source):
+def merge_fields(target: dict, source: dict) -> None:
     for key, value in source.items():
         if isinstance(value, str):
             target[key] += value
@@ -41,7 +41,7 @@ def merge_chunk(final_response: dict, delta: dict) -> None:
                 final_tool_call["type"] = type_
 
 
-def function_to_json(func) -> dict:
+def function_to_json(func: Callable) -> dict:
     """
     Converts a Python function into a JSON-serializable dictionary
     that describes the function's signature, including its name,
@@ -100,7 +100,7 @@ def function_to_json(func) -> dict:
     }
 
 
-def fix_schema(schema):
+def fix_schema(schema: dict) -> dict:
     if "title" in schema:
         # Title is not very useful, and also not supported by Gemini
         del schema["title"]
@@ -122,7 +122,7 @@ def fix_schema(schema):
     return schema
 
 
-def flatten_schema(schema):
+def flatten_schema(schema: dict) -> dict:
     if "$defs" in schema:
         schema = jsonref.replace_refs(schema, lazy_load=False)
         del schema["$defs"]
@@ -156,7 +156,7 @@ TYPE_MAP = {
 }
 
 
-def get_pydantic_type(t: type) -> type:
+def get_pydantic_type(t: Any) -> Any:
     _t = get_origin(t) or t
     ret = TYPE_MAP.get(_t, t)
     if ret is ListResult:
@@ -174,7 +174,7 @@ JSON_MODE = {
     "type": "json_object",
 }
 
-def type_to_response_format(type_: Optional[type]) -> dict:
+def type_to_response_format(type_: Any) -> Optional[dict]:
     if type_ is None:
         return None
     elif isinstance(type_, dict):
@@ -200,7 +200,7 @@ def type_to_response_format(type_: Optional[type]) -> dict:
         raise ValueError(f"Unsupported type for response_format: {type_}")
     
 
-def get_mime_type_from_file_like_object(file_like_object:str, filename:str = None):
+def get_mime_type_from_file_like_object(file_like_object: Any, filename: Optional[str] = None) -> str:
     """
     Determines the MIME type of a file-like object by examining its name (if available)
     or its content as a fallback.

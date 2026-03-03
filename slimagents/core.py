@@ -15,7 +15,7 @@ import logging
 
 # Package/library imports
 from litellm import Usage, acompletion
-from litellm.types.completion import ChatCompletionMessageToolCallParam
+
 from pydantic import AnyUrl, BaseModel
 
 # Local imports
@@ -87,12 +87,12 @@ class HandleToolCallResult():
     Attributes:
         messages (list[dict]): List of messages generated during tool call handling.
         agent (Optional[Agent]): The agent instance, if a handoff occurred.
-        filtered_tool_calls (list[ChatCompletionMessageToolCallParam]): List of tool calls that were processed.
+        filtered_tool_calls (list[dict]): List of tool calls that were processed.
         result (Optional[ToolResult]): The final result of the tool call handling, if any.
     """
     messages: list[dict]
     agent: Optional["Agent"] = None
-    filtered_tool_calls: list[ChatCompletionMessageToolCallParam] = field(default_factory=list)
+    filtered_tool_calls: list[dict] = field(default_factory=list)
     result: Optional[ToolResult] = None
 
 class DelimiterType(Enum):
@@ -195,52 +195,52 @@ class Agent:
             pass
 
         # Cache related
-        self.__tools = None
-        self.__json_tools = None
-        self.__json_response_format = None
-        self.__all_chat_completion_params = None
-        self.__function_map = None
+        self.__tools: Optional[list[AgentFunction]] = None
+        self.__json_tools: Optional[list[dict]] = None
+        self.__json_response_format: Optional[dict] = None
+        self.__all_chat_completion_params: Optional[dict[str, Any]] = None
+        self.__function_map: Optional[dict[str, Callable]] = None
 
-    @property 
-    def name(self):
+    @property
+    def name(self) -> str:
         return self._name
     @name.setter
-    def name(self, value):
+    def name(self, value: str) -> None:
         self._name = value
     
     @property
-    def model(self):
+    def model(self) -> str:
         return self._model
     @model.setter
-    def model(self, value):
+    def model(self, value: str) -> None:
         if value != self._model:
             self.__all_chat_completion_params = None
             self._model = value
 
     @property
-    def instructions(self):
+    def instructions(self) -> Optional[Union[str, Callable[[], str]]]:
         return self._instructions
     @instructions.setter
-    def instructions(self, value):
+    def instructions(self, value: Optional[Union[str, Callable[[], str]]]) -> None:
         if value != self._instructions:
             self.__all_chat_completion_params = None
             self._instructions = value
 
     @property
-    def memory(self):
+    def memory(self) -> list[dict]:
         """
         The "default" memory of the agent that will always be included for each chat completion.
         """
         return self._memory
     @memory.setter
-    def memory(self, value):
+    def memory(self, value: list[dict]) -> None:
         self._memory = value
 
     @property
-    def tools(self):
+    def tools(self) -> list[AgentFunction]:
         return self._tools
     @tools.setter
-    def tools(self, value):
+    def tools(self, value: list[AgentFunction]) -> None:
         if value != self._tools:
             self.__all_chat_completion_params = None
             self.__json_tools = None
@@ -248,60 +248,60 @@ class Agent:
             self._tools = value 
 
     @property
-    def tool_choice(self):
+    def tool_choice(self) -> Optional[Union[str, dict]]:
         return self._tool_choice
     @tool_choice.setter
-    def tool_choice(self, value):
+    def tool_choice(self, value: Optional[Union[str, dict]]) -> None:
         if value != self._tool_choice:
             self.__all_chat_completion_params = None
             self._tool_choice = value
 
     @property
-    def parallel_tool_calls(self):
+    def parallel_tool_calls(self) -> Optional[bool]:
         return self._parallel_tool_calls
     @parallel_tool_calls.setter
-    def parallel_tool_calls(self, value):
+    def parallel_tool_calls(self, value: Optional[bool]) -> None:
         if value != self._parallel_tool_calls:
             self.__all_chat_completion_params = None
             self._parallel_tool_calls = value
 
     @property
-    def response_format(self):
+    def response_format(self) -> Optional[Union[dict, type[BaseModel]]]:
         return self._response_format
     @response_format.setter
-    def response_format(self, value):
+    def response_format(self, value: Optional[Union[dict, type[BaseModel]]]) -> None:
         if value != self._response_format:
             self.__all_chat_completion_params = None
             self.__json_response_format = None
             self._response_format = get_pydantic_type(value)
 
     @property
-    def temperature(self):
+    def temperature(self) -> Optional[float]:
         return self._temperature
     @temperature.setter
-    def temperature(self, value):
+    def temperature(self, value: Optional[float]) -> None:
         if value != self._temperature:
             self.__all_chat_completion_params = None
             self._temperature = value
 
     @property
-    def lite_llm_args(self):
+    def lite_llm_args(self) -> dict:
         return self._lite_llm_args
     @lite_llm_args.setter
-    def lite_llm_args(self, value):
+    def lite_llm_args(self, value: dict) -> None:
         if value != self._lite_llm_args:
             self.__all_chat_completion_params = None
             self._lite_llm_args = value
 
     
-    def __get_function_map(self):
+    def __get_function_map(self) -> dict[str, Callable]:
         if self.__function_map is not None and self.__tools == self.tools:
             # Use cached function map
             return self.__function_map
-        
-        def sync_wrapper(f):
+
+        def sync_wrapper(f: Callable) -> Callable:
             """Wraps a synchronous function in an async function."""
-            async def wrapper(*args, **kwargs):
+            async def wrapper(*args: Any, **kwargs: Any) -> Any:
                 return f(*args, **kwargs)
             return wrapper
         
@@ -315,7 +315,7 @@ class Agent:
         return function_map
 
 
-    def __get_all_chat_completion_params(self):
+    def __get_all_chat_completion_params(self) -> dict[str, Any]:
         if self.__all_chat_completion_params is not None:
             if self.__tools == self.tools:
                 # It's safe to return the cached params
@@ -353,7 +353,7 @@ class Agent:
         return params
 
 
-    async def _get_chat_completion(self, run_id: str, turns: int, memory: list[dict], memory_delta: list[dict], stream: bool = False, caching: bool = False):
+    async def _get_chat_completion(self, run_id: str, turns: int, memory: list[dict], memory_delta: list[dict], stream: bool = False, caching: bool = False) -> Any:
         if self.instructions:
             messages = [{"role": "system", "content": self.instructions}]
         else:
@@ -378,7 +378,7 @@ class Agent:
         return await acompletion(**create_params)
 
 
-    async def _handle_function_result(self, run_id: str, result, memory: list[dict], memory_delta: list[dict], caching: bool) -> ToolResult:
+    async def _handle_function_result(self, run_id: str, result: Any, memory: list[dict], memory_delta: list[dict], caching: bool) -> ToolResult:
         if isinstance(result, ToolResult):
             if result.agent and not result.handoff:
                 response = await result.agent._run(run_id, memory=memory.copy(), memory_delta=memory_delta.copy(), caching=caching)
@@ -401,7 +401,7 @@ class Agent:
                 raise TypeError(error_message % (result, str(e)))
             
 
-    def _get_value(self, content: str):
+    def _get_value(self, content: str) -> Any:
         if self.response_format:
             if self.response_format is dict or isinstance(self.response_format, dict):
                 return json.loads(content)
@@ -420,7 +420,7 @@ class Agent:
     def _update_partial_response(
             self, 
             partial_response: HandleToolCallResult, 
-            tool_call: ChatCompletionMessageToolCallParam, 
+            tool_call: dict,
             result: ToolResult
     ) -> dict:
         partial_response.filtered_tool_calls.append(tool_call)
@@ -452,7 +452,7 @@ class Agent:
     ) -> AsyncGenerator[tuple[dict, ToolResult], None]:
         function_map = self.__get_function_map()
 
-        async def tool_call_wrapper(tool_call):
+        async def tool_call_wrapper(tool_call: dict) -> tuple[dict, ToolResult]:
             function = tool_call["function"]
             name = function["name"]
             tool_id = tool_call["id"]
@@ -489,7 +489,7 @@ class Agent:
             yield tool_call, result
 
 
-    def _handle_partial_response(self, run_id: str, turns: int, t0_run: float, partial_response: HandleToolCallResult, message: dict, memory: list[dict], memory_delta: list[dict], metadata: ResponseMetadata) -> Optional[Response]:
+    def _handle_partial_response(self, run_id: str, turns: int, t0_run: float, partial_response: HandleToolCallResult, message: dict, memory: list[dict], memory_delta: list[dict], metadata: Optional[ResponseMetadata]) -> Optional[Response]:
         if partial_response.filtered_tool_calls:
             # Only add tool calls to memory if there are any left after filtering
             memory_delta.append(message)
@@ -507,9 +507,9 @@ class Agent:
                 agent=self,
                 metadata=metadata,
             )
-        
+        return None
 
-    def _get_response(self, run_id: str, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict], metadata: ResponseMetadata):
+    def _get_response(self, run_id: str, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict], metadata: Optional[ResponseMetadata]) -> Response:
         memory.extend(memory_delta) # FIXME? Is this really a good idea? 
         value = self._get_value(memory[-1]["content"])
         t_run_delta = time.time() - t0_run
@@ -526,7 +526,7 @@ class Agent:
 
 
     def _get_user_message(self, inputs: tuple) -> dict:
-        def user_message_part(input):
+        def user_message_part(input: Any) -> dict:
             if isinstance(input, str):
                 return {
                     "type": "text",
@@ -583,7 +583,7 @@ class Agent:
             return {"role": "user", "content": [user_message_part(input) for input in inputs]} 
 
 
-    def _log_completion(self, run_id: str, turns: int, t0: float, message: dict):
+    def _log_completion(self, run_id: str, turns: int, t0: float, message: dict) -> None:
         delta_t = time.time() - t0
         if self.logger.getEffectiveLevel() <= logging.DEBUG:
             self.logger.debug("Run %s-%d: (After %.2f s) Received completion: %s", run_id, turns, delta_t, message)
@@ -596,7 +596,7 @@ class Agent:
                 self.logger.info("Run %s-%d: (After %.2f s) Received completion with text content.", run_id, turns, delta_t)
 
 
-    def _update_metadata(self, metadata: ResponseMetadata, completion: Any) -> ResponseMetadata:
+    def _update_metadata(self, metadata: Optional[ResponseMetadata], completion: Any) -> Optional[ResponseMetadata]:
         usage = getattr(completion, "usage", None)
         hidden_params = getattr(completion, "_hidden_params", None)
         if usage or hidden_params:
@@ -631,10 +631,10 @@ class Agent:
             stream_delimiters: bool,
             stream_tool_calls: bool,
             stream_response: bool,
-            max_turns: int,
+            max_turns: float,
             execute_tools: bool,
             caching: bool,
-    ):
+    ) -> AsyncGenerator[Union[str, dict, MessageDelimiter, Response], None]:
         t0_run = time.time()
         active_agent = self
         turns = 0
@@ -642,7 +642,7 @@ class Agent:
 
         while turns < max_turns:
             active_agent._before_chat_completion()
-            message = {
+            message: dict[str, Any] = {
                 "content": "",
                 "sender": active_agent.name,
                 "role": "assistant",
@@ -732,11 +732,11 @@ class Agent:
     async def _run(
             self,
             run_id: str,
-            memory: Optional[list[dict]] = None,
-            memory_delta: Optional[list[dict]] = None,
-            max_turns: Optional[int] = float("inf"),
-            execute_tools: Optional[bool] = True,
-            caching: Optional[bool] = None,
+            memory: list[dict],
+            memory_delta: list[dict],
+            max_turns: float = float("inf"),
+            execute_tools: bool = True,
+            caching: bool = False,
     ) -> Response:
         t0_run = time.time()
         active_agent = self
@@ -777,7 +777,7 @@ class Agent:
         return active_agent._get_response(run_id, turns, t0_run, memory, memory_delta, metadata)
 
 
-    def _get_run_id(self):
+    def _get_run_id(self) -> str:
         # 6 random alphanumeric characters
         return ''.join(random.choices(string.ascii_letters + string.digits, k=6))
 
@@ -792,10 +792,10 @@ class Agent:
             stream_delimiters: bool = False,
             stream_tool_calls: bool = False,
             stream_response: bool = False,
-            max_turns: Optional[int] = float("inf"),
-            execute_tools: Optional[bool] = True,
+            max_turns: float = float("inf"),
+            execute_tools: bool = True,
             caching: Optional[bool] = None,
-    ) -> Response | AsyncGenerator[Response, None]:
+    ) -> Union[Response, AsyncGenerator[Union[str, dict, MessageDelimiter, Response], None]]:
         """
         Run the agent with the given inputs and return a response.
 
@@ -805,7 +805,7 @@ class Agent:
         Args:
             *inputs: Variable length input arguments to process.
             memory (Optional[list[dict]]): Conversation history to use. Defaults to empty list.
-            memory_delta (Optional[list[dict]]): Additional messages to add to memory. Must be empty if provided.
+            memory_delta (Optional[list[dict]]): Additional messages generated by the agent will be added to this list. Must be empty if provided.
             stream (Optional[bool]): Whether to stream the response. Defaults to False.
             stream_tokens (bool): Whether to stream individual tokens. Defaults to True.
             stream_delimiters (bool): Whether to stream message delimiters. Defaults to False.
@@ -870,15 +870,15 @@ class Agent:
             *inputs,
             memory: Optional[list[dict]] = None,
             memory_delta: Optional[list[dict]] = None,
-            stream: bool = False, 
+            stream: bool = False,
             stream_tokens: bool = True,
             stream_delimiters: bool = False,
             stream_tool_calls: bool = False,
             stream_response: bool = False,
-            max_turns: int = float("inf"), 
+            max_turns: float = float("inf"),
             execute_tools: bool = True,
-            caching: bool = None,
-    ) -> Response:
+            caching: Optional[bool] = None,
+    ) -> Any:
         """
         Synchronously run the agent with the given inputs and return a response.
 
@@ -932,15 +932,15 @@ class Agent:
             *inputs,
             memory: Optional[list[dict]] = None,
             memory_delta: Optional[list[dict]] = None,
-            stream: bool = False, 
+            stream: bool = False,
             stream_tokens: bool = True,
             stream_delimiters: bool = False,
             stream_tool_calls: bool = False,
             stream_response: bool = False,
-            max_turns: int = float("inf"), 
+            max_turns: float = float("inf"),
             execute_tools: bool = True,
-            caching: bool = None,
-    ) -> Response:
+            caching: Optional[bool] = None,
+    ) -> Any:
         """
         Synchronously apply the agent to the inputs and return the response value.
 
@@ -995,10 +995,10 @@ class Agent:
             stream_delimiters: bool = False,
             stream_tool_calls: bool = False,
             stream_response: bool = False,
-            max_turns: Optional[int] = float("inf"),
-            execute_tools: Optional[bool] = True,
+            max_turns: float = float("inf"),
+            execute_tools: bool = True,
             caching: Optional[bool] = None,
-    ) -> Response:
+    ) -> Any:
         """
         Asynchronously apply the agent to the inputs and return the response value.
 
