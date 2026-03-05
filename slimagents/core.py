@@ -8,7 +8,7 @@ import mimetypes
 import random
 import string
 import time
-from typing import AsyncGenerator, Callable, Optional, Union, Coroutine, Any
+from typing import AsyncGenerator, Callable, Generic, Literal, Optional, TypeVar, Union, Coroutine, Any, cast, overload
 import inspect
 import asyncio
 import logging
@@ -23,7 +23,9 @@ from .util import PrimitiveResult, function_to_json, get_mime_type_from_content,
 import slimagents.config as config
 
 # Types
+T = TypeVar('T')
 AgentFunction = Callable[..., Union[str, "Agent", dict, Coroutine[Any, Any, Union[str, "Agent", dict]]]]
+StreamResponse = AsyncGenerator[Union[str, dict, "MessageDelimiter", "Response[T]"], None]
 
 @dataclass
 class ResponseMetadata():
@@ -46,19 +48,20 @@ class ResponseMetadata():
     litellm_hidden_params: Optional[list[dict]] = None
 
 @dataclass
-class Response():
+class Response(Generic[T]):
     """
     Represents a response from an agent.
 
     Attributes:
-        value (Any): The response value, which can be of any type depending on the response_format.
+        value (T): The response value. The type depends on the agent's response_format:
+            str when no response_format is set, dict for JSON mode, or a BaseModel subclass for structured output.
         memory_delta (list[dict]): The list of messages that were added to the memory during this response.
         agent (Agent): The agent instance that generated this response.
         metadata (Optional[ResponseMetadata]): Additional metadata about the response.
     """
-    value: Any
+    value: T
     memory_delta: list[dict]
-    agent: "Agent"
+    agent: "Agent[Any]"
     metadata: Optional[ResponseMetadata] = None
 
 @dataclass
@@ -130,7 +133,7 @@ class FileContent():
 
 DEFAULT_MODEL = "gpt-4.1"
 
-class Agent:
+class Agent(Generic[T]):
     """
     A conversational agent that can process inputs, use tools, and generate responses.
 
@@ -143,19 +146,51 @@ class Agent:
 
     logger = config.agent_logger.getChild("Agent")
 
+    @overload
     def __init__(
-            self, 
-            name: Optional[str] = None, 
+            self: "Agent[str]",
+            name: Optional[str] = ...,
+            model: Optional[str] = ...,
+            instructions: Optional[Union[str, Callable[[], str]]] = ...,
+            memory: Optional[list[dict]] = ...,
+            tools: Optional[list[AgentFunction]] = ...,
+            tool_choice: Optional[Union[str, dict]] = ...,
+            parallel_tool_calls: Optional[bool] = ...,
+            response_format: None = ...,
+            temperature: Optional[float] = ...,
+            logger: Optional[logging.Logger] = ...,
+            **lite_llm_args: Any,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+            self,
+            name: Optional[str] = ...,
+            model: Optional[str] = ...,
+            instructions: Optional[Union[str, Callable[[], str]]] = ...,
+            memory: Optional[list[dict]] = ...,
+            tools: Optional[list[AgentFunction]] = ...,
+            tool_choice: Optional[Union[str, dict]] = ...,
+            parallel_tool_calls: Optional[bool] = ...,
+            response_format: Union[dict, type[T]] = ...,
+            temperature: Optional[float] = ...,
+            logger: Optional[logging.Logger] = ...,
+            **lite_llm_args: Any,
+    ) -> None: ...
+
+    def __init__(
+            self,
+            name: Optional[str] = None,
             model: Optional[str] = None,
-            instructions: Optional[Union[str, Callable[[], str]]] = None, 
+            instructions: Optional[Union[str, Callable[[], str]]] = None,
             memory: Optional[list[dict]] = None,
-            tools: Optional[list[AgentFunction]] = None, 
-            tool_choice: Optional[Union[str, dict]] = None, 
-            parallel_tool_calls: Optional[bool] = None, 
-            response_format: Optional[Union[dict, type[BaseModel]]] = None,
+            tools: Optional[list[AgentFunction]] = None,
+            tool_choice: Optional[Union[str, dict]] = None,
+            parallel_tool_calls: Optional[bool] = None,
+            response_format: Optional[Union[dict, type]] = None,
             temperature: Optional[float] = None,
             logger: Optional[logging.Logger] = None,
-            **lite_llm_args
+            **lite_llm_args: Any,
     ):
         """
         Initialize a new Agent instance.
@@ -168,7 +203,8 @@ class Agent:
             tools (Optional[list[AgentFunction]]): List of functions the agent can use.
             tool_choice (Optional[Union[str, dict]]): Control over tool selection.
             parallel_tool_calls (Optional[bool]): Whether to allow parallel tool calls.
-            response_format (Optional[Union[dict, type[BaseModel]]]): Format for response parsing.
+            response_format (Optional[Union[dict, type]]): Format for response parsing.
+                Determines the type parameter T: None → str, dict → dict, BaseModel subclass → that subclass.
             temperature (Optional[float]): Temperature for response generation.
             logger (Optional[logging.Logger]): Custom logger instance.
             **lite_llm_args: Additional arguments passed to the LLM.
@@ -401,20 +437,20 @@ class Agent:
                 raise TypeError(error_message % (result, str(e)))
             
 
-    def _get_value(self, content: str) -> Any:
+    def _get_value(self, content: str) -> T:
         if self.response_format:
             if self.response_format is dict or isinstance(self.response_format, dict):
-                return json.loads(content)
+                return cast(T, json.loads(content))
             elif issubclass(self.response_format, BaseModel):
                 ret = self.response_format.model_validate_json(content)
                 if isinstance(ret, PrimitiveResult):
-                    return ret.result
+                    return cast(T, ret.result)
                 else:
-                    return ret
+                    return cast(T, ret)
             else:
                 raise ValueError(f"Unsupported response_format: {self.response_format}")
         else:
-            return content
+            return cast(T, content)
 
 
     def _update_partial_response(
@@ -489,7 +525,7 @@ class Agent:
             yield tool_call, result
 
 
-    def _handle_partial_response(self, run_id: str, turns: int, t0_run: float, partial_response: HandleToolCallResult, message: dict, memory: list[dict], memory_delta: list[dict], metadata: Optional[ResponseMetadata]) -> Optional[Response]:
+    def _handle_partial_response(self, run_id: str, turns: int, t0_run: float, partial_response: HandleToolCallResult, message: dict, memory: list[dict], memory_delta: list[dict], metadata: Optional[ResponseMetadata]) -> Optional[Response[T]]:
         if partial_response.filtered_tool_calls:
             # Only add tool calls to memory if there are any left after filtering
             memory_delta.append(message)
@@ -502,14 +538,14 @@ class Agent:
                 self.logger.info("Run %s-%d: (After %.2f s) Run completed due to final answer reached in tool call", run_id, turns, t_run_delta)
             memory.extend(memory_delta)
             return Response(
-                value=partial_response.result.value,
+                value=cast(T, partial_response.result.value),
                 memory_delta=memory_delta,
                 agent=self,
                 metadata=metadata,
             )
         return None
 
-    def _get_response(self, run_id: str, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict], metadata: Optional[ResponseMetadata]) -> Response:
+    def _get_response(self, run_id: str, turns: int, t0_run: float, memory: list[dict], memory_delta: list[dict], metadata: Optional[ResponseMetadata]) -> Response[T]:
         memory.extend(memory_delta) # FIXME? Is this really a good idea? 
         value = self._get_value(memory[-1]["content"])
         t_run_delta = time.time() - t0_run
@@ -634,7 +670,7 @@ class Agent:
             max_turns: float,
             execute_tools: bool,
             caching: bool,
-    ) -> AsyncGenerator[Union[str, dict, MessageDelimiter, Response], None]:
+    ) -> StreamResponse:
         t0_run = time.time()
         active_agent = self
         turns = 0
@@ -737,7 +773,7 @@ class Agent:
             max_turns: float = float("inf"),
             execute_tools: bool = True,
             caching: bool = False,
-    ) -> Response:
+    ) -> Response[T]:
         t0_run = time.time()
         active_agent = self
         turns = 0
@@ -782,9 +818,41 @@ class Agent:
         return ''.join(random.choices(string.ascii_letters + string.digits, k=6))
 
     
+    @overload
     async def run(
             self,
-            *inputs,
+            *inputs: Any,
+            memory: Optional[list[dict]] = ...,
+            memory_delta: Optional[list[dict]] = ...,
+            stream: Literal[False] = ...,
+            stream_tokens: bool = ...,
+            stream_delimiters: bool = ...,
+            stream_tool_calls: bool = ...,
+            stream_response: bool = ...,
+            max_turns: float = ...,
+            execute_tools: bool = ...,
+            caching: Optional[bool] = ...,
+    ) -> Response[T]: ...
+
+    @overload
+    async def run(
+            self,
+            *inputs: Any,
+            memory: Optional[list[dict]] = ...,
+            memory_delta: Optional[list[dict]] = ...,
+            stream: Literal[True] = ...,
+            stream_tokens: bool = ...,
+            stream_delimiters: bool = ...,
+            stream_tool_calls: bool = ...,
+            stream_response: bool = ...,
+            max_turns: float = ...,
+            execute_tools: bool = ...,
+            caching: Optional[bool] = ...,
+    ) -> StreamResponse: ...
+
+    async def run(
+            self,
+            *inputs: Any,
             memory: Optional[list[dict]] = None,
             memory_delta: Optional[list[dict]] = None,
             stream: Optional[bool] = False,
@@ -795,7 +863,7 @@ class Agent:
             max_turns: float = float("inf"),
             execute_tools: bool = True,
             caching: Optional[bool] = None,
-    ) -> Union[Response, AsyncGenerator[Union[str, dict, MessageDelimiter, Response], None]]:
+    ) -> Union[Response[T], StreamResponse]:
         """
         Run the agent with the given inputs and return a response.
 
@@ -865,9 +933,41 @@ class Agent:
             )
 
 
+    @overload
     def run_sync(
-            self, 
-            *inputs,
+            self,
+            *inputs: Any,
+            memory: Optional[list[dict]] = ...,
+            memory_delta: Optional[list[dict]] = ...,
+            stream: Literal[False] = ...,
+            stream_tokens: bool = ...,
+            stream_delimiters: bool = ...,
+            stream_tool_calls: bool = ...,
+            stream_response: bool = ...,
+            max_turns: float = ...,
+            execute_tools: bool = ...,
+            caching: Optional[bool] = ...,
+    ) -> Response[T]: ...
+
+    @overload
+    def run_sync(
+            self,
+            *inputs: Any,
+            memory: Optional[list[dict]] = ...,
+            memory_delta: Optional[list[dict]] = ...,
+            stream: Literal[True] = ...,
+            stream_tokens: bool = ...,
+            stream_delimiters: bool = ...,
+            stream_tool_calls: bool = ...,
+            stream_response: bool = ...,
+            max_turns: float = ...,
+            execute_tools: bool = ...,
+            caching: Optional[bool] = ...,
+    ) -> StreamResponse: ...
+
+    def run_sync(
+            self,
+            *inputs: Any,
             memory: Optional[list[dict]] = None,
             memory_delta: Optional[list[dict]] = None,
             stream: bool = False,
@@ -878,7 +978,7 @@ class Agent:
             max_turns: float = float("inf"),
             execute_tools: bool = True,
             caching: Optional[bool] = None,
-    ) -> Any:
+    ) -> Union[Response[T], StreamResponse]:
         """
         Synchronously run the agent with the given inputs and return a response.
 
@@ -911,25 +1011,57 @@ class Agent:
             asyncio.set_event_loop(loop)
         
         return loop.run_until_complete(
-            self.run(
-                *inputs, 
+            self.run(  # type: ignore[call-overload]
+                *inputs,
                 memory=memory,
                 memory_delta=memory_delta,
-                stream=stream, 
-                stream_tokens=stream_tokens, 
-                stream_delimiters=stream_delimiters, 
-                stream_tool_calls=stream_tool_calls, 
-                stream_response=stream_response, 
-                max_turns=max_turns, 
-                execute_tools=execute_tools, 
+                stream=stream,
+                stream_tokens=stream_tokens,
+                stream_delimiters=stream_delimiters,
+                stream_tool_calls=stream_tool_calls,
+                stream_response=stream_response,
+                max_turns=max_turns,
+                execute_tools=execute_tools,
                 caching=caching,
             )
         )
 
 
+    @overload
     def apply(
-            self, 
-            *inputs,
+            self,
+            *inputs: Any,
+            memory: Optional[list[dict]] = ...,
+            memory_delta: Optional[list[dict]] = ...,
+            stream: Literal[False] = ...,
+            stream_tokens: bool = ...,
+            stream_delimiters: bool = ...,
+            stream_tool_calls: bool = ...,
+            stream_response: bool = ...,
+            max_turns: float = ...,
+            execute_tools: bool = ...,
+            caching: Optional[bool] = ...,
+    ) -> T: ...
+
+    @overload
+    def apply(
+            self,
+            *inputs: Any,
+            memory: Optional[list[dict]] = ...,
+            memory_delta: Optional[list[dict]] = ...,
+            stream: Literal[True] = ...,
+            stream_tokens: bool = ...,
+            stream_delimiters: bool = ...,
+            stream_tool_calls: bool = ...,
+            stream_response: bool = ...,
+            max_turns: float = ...,
+            execute_tools: bool = ...,
+            caching: Optional[bool] = ...,
+    ) -> StreamResponse: ...
+
+    def apply(
+            self,
+            *inputs: Any,
             memory: Optional[list[dict]] = None,
             memory_delta: Optional[list[dict]] = None,
             stream: bool = False,
@@ -940,7 +1072,7 @@ class Agent:
             max_turns: float = float("inf"),
             execute_tools: bool = True,
             caching: Optional[bool] = None,
-    ) -> Any:
+    ) -> Union[T, StreamResponse]:
         """
         Synchronously apply the agent to the inputs and return the response value.
 
@@ -966,7 +1098,7 @@ class Agent:
         Raises:
             ValueError: If memory_delta is provided and not empty.
         """
-        response = self.run_sync(
+        response = self.run_sync(  # type: ignore[call-overload]
             *inputs,
             memory=memory,
             memory_delta=memory_delta,
@@ -980,14 +1112,47 @@ class Agent:
             caching=caching,
         )
         if stream:
-            return response
+            return cast(StreamResponse, response)
         else:
+            assert isinstance(response, Response)
             return response.value
         
 
+    @overload
     async def __call__(
             self,
-            *inputs,
+            *inputs: Any,
+            memory: Optional[list[dict]] = ...,
+            memory_delta: Optional[list[dict]] = ...,
+            stream: Literal[False] = ...,
+            stream_tokens: bool = ...,
+            stream_delimiters: bool = ...,
+            stream_tool_calls: bool = ...,
+            stream_response: bool = ...,
+            max_turns: float = ...,
+            execute_tools: bool = ...,
+            caching: Optional[bool] = ...,
+    ) -> T: ...
+
+    @overload
+    async def __call__(
+            self,
+            *inputs: Any,
+            memory: Optional[list[dict]] = ...,
+            memory_delta: Optional[list[dict]] = ...,
+            stream: Literal[True] = ...,
+            stream_tokens: bool = ...,
+            stream_delimiters: bool = ...,
+            stream_tool_calls: bool = ...,
+            stream_response: bool = ...,
+            max_turns: float = ...,
+            execute_tools: bool = ...,
+            caching: Optional[bool] = ...,
+    ) -> StreamResponse: ...
+
+    async def __call__(
+            self,
+            *inputs: Any,
             memory: Optional[list[dict]] = None,
             memory_delta: Optional[list[dict]] = None,
             stream: Optional[bool] = False,
@@ -998,7 +1163,7 @@ class Agent:
             max_turns: float = float("inf"),
             execute_tools: bool = True,
             caching: Optional[bool] = None,
-    ) -> Any:
+    ) -> Union[T, StreamResponse]:
         """
         Asynchronously apply the agent to the inputs and return the response value.
 
@@ -1024,7 +1189,7 @@ class Agent:
         Raises:
             ValueError: If memory_delta is provided and not empty.
         """
-        response = await self.run(
+        response = await self.run(  # type: ignore[call-overload]
             *inputs,
             memory=memory,
             memory_delta=memory_delta,
@@ -1038,8 +1203,9 @@ class Agent:
             caching=caching,
         )
         if stream:
-            return response
+            return cast(StreamResponse, response)
         else:
+            assert isinstance(response, Response)
             return response.value
         
 

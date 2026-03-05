@@ -83,7 +83,7 @@ async def run_demo_loop_async(agent: Agent, stream: bool = False, log_level: Opt
 
     while True:
         user_input = input("\033[90mUser\033[0m: ")
-        response: Any = await agent.run(user_input, stream=stream, memory=memory, stream_response=True, stream_delimiters=True, stream_tokens=False, stream_tool_calls=True)
+        response: Any = await agent.run(user_input, stream=stream, memory=memory, stream_response=True, stream_delimiters=True, stream_tokens=False, stream_tool_calls=True)  # type: ignore[call-overload]
         if stream:
             response = await process_and_print_streaming_response(response)
         else:

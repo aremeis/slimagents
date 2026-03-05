@@ -2,7 +2,7 @@ import copy
 import inspect
 import re
 from typing import Any, Callable, Generic, Optional, TypeVar, get_args, get_origin
-import jsonref
+import jsonref  # type: ignore[import-untyped]
 from pydantic import BaseModel
 import mimetypes
 from slimagents.config import logger
