@@ -1,90 +1,82 @@
 # SlimAgents
 
-A lightweight and developer-friendly library for building and orchestrating AI agents
+A lightweight and developer-friendly library for building and orchestrating AI agents.
 
+SlimAgents wraps any LLM (via [LiteLLM](https://github.com/BerriAI/litellm)) with a simple `Agent` class that handles tool calling, streaming, structured outputs, multi-modal inputs, and agent handoffs — all in under 1200 lines of code.
 
 ## Install
 
 Requires Python 3.10+
 
-Latest stable release:
-
 ```shell
 pip install slimagents
 ```
 
-Latest development version:
-
-```shell
-pip install git+ssh://git@github.com/aremeis/slimagents.git
-```
-
-or
+Or install the latest development version:
 
 ```shell
 pip install git+https://github.com/aremeis/slimagents.git
 ```
 
-## Documentation
-
-In SlimAgents, an Agent is simply a wrapper around a large language model, textual instructions, and a set of tools. 
-Based on the inputs, the agent selects tool calls, executes them, and adds the result to its memory. 
-This process is repeated until the LLM does not generate any more tool calls, in which case the agent returns the last 
-message content generated from the LLM.
-
-Here's a simple example:
+## Quick start
 
 ```python
 from slimagents import Agent
 
-def python_evaluator(expression: str) -> str:
-    """Evaluate a Python expression. Always use this tool for calculations and other complex operations."""
-    print(f"--- Evaluating {expression}")
-    # Obviously not secure, but for the sake of this example we'll just eval the expression.
-    ret = str(eval(expression))
-    print(f"--> {ret}")
-    return ret
+def calculator(expression: str) -> str:
+    """Evaluate a Python expression."""
+    return str(eval(expression))
 
 agent = Agent(
-    instructions="You are a helpful assistant. When given a task you always try to solve it by using tools, never rely on your own knowledge.",
-    tools=[python_evaluator],
+    instructions="You are a helpful assistant. Use the calculator tool for math.",
+    tools=[calculator],
 )
 
-prompt = "How many R's are in the word 'STRAWBERRY'?"
-print(f"User: {prompt}")
-value = agent.apply(prompt)
-print(f"Agent: {value}")
+value = agent.apply("What is 1234 * 5678?")
+print(value)  # "1234 * 5678 = 7,006,652."
 ```
 
-Result:
-```
-User: How many R's are in the word 'STRAWBERRY'?
---- Evaluating 'STRAWBERRY'.count('R')
---> 3
-Agent: There are 3 'R's in the word 'STRAWBERRY'.
-```
-
-### Tools
-
-As you can see from the example above, a tool is simply a normal Python function! This means that it is very easy to integrate 
-existing Python libraries with your agents. Use the tool's docstring to describe the tool and its arguments to the LLM.
-
-SlimAgents supports both synchronous and asynchronous tool calls. If the LLM generates several async tool calls, they will be 
-executed in parallel. 
-
-NOTE: The method `apply` is used in the examples in this document. In async applications, you can call the `Agent` class directly:
-```python
-async def async_function():
-    value = await agent(prompt)
-```
-
-Tools can also be implemented as methods. This allows for encapsulation of the agent's settings and logic into an `Agent` subclass:
+`apply()` is a synchronous convenience method that returns just the response value. For async code, call the agent directly:
 
 ```python
-# !pip install python-weather
+value = await agent("What is 1234 * 5678?")
+```
 
-from slimagents import Agent
+## Tools
+
+A tool is just a Python function. The function name, docstring, and type annotations are automatically converted to the LLM's tool schema — no decorators or registration needed.
+
+```python
+def get_weather(city: str, unit: str = "celsius") -> str:
+    """Get the current weather for a city."""
+    return f"22 degrees {unit} in {city}"
+
+agent = Agent(tools=[get_weather])
+```
+
+### Async tools
+
+Both sync and async tools are supported. When the LLM generates multiple tool calls, async tools run concurrently:
+
+```python
+import httpx
+
+async def fetch_url(url: str) -> str:
+    """Fetch the content of a URL."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        return response.text
+
+agent = Agent(tools=[fetch_url])
+```
+
+### Tools as methods
+
+Tools can be methods on an `Agent` subclass, which allows you to encapsulate state and logic:
+
+```python
 import python_weather
+from slimagents import Agent
 
 class WeatherAgent(Agent):
     def __init__(self):
@@ -96,197 +88,332 @@ class WeatherAgent(Agent):
     async def get_temperature(self, location: str) -> float:
         """Get the current temperature in a given location, in degrees Celsius."""
         async with python_weather.Client(unit=python_weather.METRIC) as client:
-            print(f"--- Getting temperature for {location}")
             weather = await client.get(location)
-            print(f"--> Temperature in {location}: {weather.temperature}")
             return weather.temperature
 
 agent = WeatherAgent()
-prompt = "What is the temperature difference between London and Paris?"
-print(f"User: {prompt}")
-value = agent.apply(prompt)
-print(f"Agent: {value}")
+value = agent.apply("What is the temperature difference between London and Paris?")
+print(value)
 ```
 
 ```
-User: What is the temperature difference between London and Paris?
---- Getting temperature for London
---- Getting temperature for Paris
---> Temperature in London: 4
---> Temperature in Paris: 3
-Agent: The temperature difference between London and Paris is 1°C, with London being warmer.
+The temperature difference between London and Paris is 1°C, with London being warmer.
 ```
 
+Since `get_temperature` is async, both calls run in parallel when the LLM requests them simultaneously.
 
-### LLMs
+## LLM support
 
-SlimAgents uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood, which means that you can use virtually any LLM to power your agents! 
-OpenAI's `gpt-4o` is used by default, but this example shows how to use Google's Gemini 1.5 Pro instead. See LiteLLM's 
-[documentation](https://github.com/BerriAI/litellm?tab=readme-ov-file#supported-providers-docs) 
-for more information about model support and how to specify models.
+SlimAgents uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood, so you can use virtually any LLM. The default model is `gpt-4.1`. Specify any model string that LiteLLM supports:
+
+```python
+# OpenAI
+agent = Agent(model="gpt-4.1-mini")
+
+# Anthropic
+agent = Agent(model="anthropic/claude-sonnet-4-20250514")
+
+# Google Gemini
+agent = Agent(model="gemini/gemini-2.5-flash")
+
+# Azure, AWS Bedrock, Ollama, etc. — see LiteLLM docs
+```
+
+Any extra keyword arguments are passed through to LiteLLM:
+
+```python
+agent = Agent(model="gpt-4.1", api_key="sk-...", base_url="https://my-proxy.com")
+```
+
+## Instructions
+
+Instructions become the system message. They can be a string or a callable for dynamic instructions:
+
+```python
+# Static instructions
+agent = Agent(instructions="You are a helpful assistant.")
+
+# Dynamic instructions via callable
+agent = Agent(instructions=lambda: f"Today's date is {date.today()}")
+```
+
+You can also override the `instructions` property in a subclass for full control:
+
+```python
+class StrictAgent(Agent):
+    def __init__(self, max_responses: int):
+        super().__init__(tools=[self.decrement])
+        self._answers_left = max_responses
+
+    @property
+    def instructions(self) -> str:
+        if self._answers_left > 0:
+            return f"You have {self._answers_left} responses left. Call `decrement` before each response."
+        return "You always answer 'I can't answer that.'."
+
+    def decrement(self):
+        """Call this before every response."""
+        self._answers_left -= 1
+        return "OK"
+```
+
+## Memory
+
+Memory is a list of message dicts in OpenAI chat format. There are two levels:
+
+- **Default memory** (`agent.memory`): always included in every call, set at construction or via the property.
+- **Per-call memory**: passed to `run()` / `apply()` and tracks the conversation for that call.
+
+```python
+agent = Agent(instructions="You are a helpful assistant.")
+
+# Maintain a conversation across multiple calls
+memory = []
+agent.apply("My name is Alice.", memory=memory)
+value = agent.apply("What's my name?", memory=memory)
+print(value)  # "Your name is Alice."
+```
+
+Use `memory_delta` to capture only the new messages added during a call:
+
+```python
+delta = []
+agent.apply("Hello!", memory=memory, memory_delta=delta)
+print(len(delta))  # Number of new messages (user message + assistant response + any tool calls)
+```
+
+## Handoffs
+
+A tool can return an `Agent` instance to transfer control to a different agent. The new agent inherits the conversation memory:
+
+```python
+sales_agent = Agent(
+    name="Sales Agent",
+    instructions="You are a sales agent. Help the customer with purchases.",
+)
+
+support_agent = Agent(
+    name="Support Agent",
+    instructions="You are a support agent. Help with technical issues.",
+)
+
+def transfer_to_sales():
+    """Transfer the customer to the sales team."""
+    return sales_agent
+
+def transfer_to_support():
+    """Transfer the customer to the support team."""
+    return support_agent
+
+triage = Agent(
+    name="Triage",
+    instructions="Route the customer to the right department.",
+    tools=[transfer_to_sales, transfer_to_support],
+)
+
+response = triage.run_sync("I want to buy a new laptop.")
+print(response.agent.name)  # "Sales Agent"
+```
+
+### Nested agent calls (non-handoff)
+
+If you want an agent to process a sub-task and return the result as a tool output (without transferring control), use `ToolResult`:
+
+```python
+from slimagents import ToolResult
+
+researcher = Agent(instructions="You are a research assistant.")
+
+def research(topic: str):
+    """Research a topic using a specialized agent."""
+    return ToolResult(agent=researcher, handoff=False)
+
+agent = Agent(tools=[research])
+# The researcher processes the topic, and its response becomes the tool result.
+# Control stays with `agent`.
+```
+
+## Structured outputs
+
+Use `response_format` to get typed responses instead of plain strings.
+
+### Pydantic models
+
+```python
+from pydantic import BaseModel
+from slimagents import Agent
+
+class MovieReview(BaseModel):
+    title: str
+    rating: float
+    summary: str
+
+agent = Agent[MovieReview](
+    instructions="You are a movie critic.",
+    response_format=MovieReview,
+)
+
+review = agent.apply("Review The Matrix")
+print(review.title)    # "The Matrix"
+print(review.rating)   # 9.0
+print(review.summary)  # "A groundbreaking sci-fi film..."
+```
+
+### JSON mode
+
+Pass `dict` to get a parsed JSON dictionary:
+
+```python
+agent = Agent[dict](response_format=dict)
+data = agent.apply("Return a JSON object with fields: name, age")
+print(data["name"])  # str
+```
+
+### Primitive types
+
+You can also use `int`, `float`, `bool`, or `list` as the response format:
+
+```python
+agent = Agent[int](response_format=int)
+count = agent.apply("How many continents are there?")
+print(count)  # 7 (int, not str)
+```
+
+## Multi-modal inputs
+
+Pass file-like objects, bytes, `FileContent`, or URLs alongside text. The agent handles base64 encoding and MIME type detection automatically:
 
 ```python
 from slimagents import Agent
 
 agent = Agent(
-    model="gemini/gemini-1.5-pro",
+    model="gemini/gemini-2.0-flash",
+    instructions="Describe the contents of the provided files.",
 )
 
-value = agent.apply("Who are you?")
-print(value)
+# File object
+with open("photo.jpg", "rb") as f:
+    description = agent.apply("What's in this image?", f)
+
+# Multiple inputs
+with open("report.pdf", "rb") as pdf:
+    summary = agent.apply("Summarize this document", pdf)
 ```
 
+For programmatic file content, use `FileContent`:
+
+```python
+from slimagents.core import FileContent
+
+content = FileContent(
+    content=image_bytes,
+    filename="chart.png",
+    mime_type="image/png",
+)
+description = agent.apply("Describe this chart", content)
 ```
-I am a large language model, trained by Google.
+
+## Streaming
+
+Enable streaming to receive tokens as they arrive:
+
+```python
+response = await agent.run("Tell me a story", stream=True)
+
+async for chunk in response:
+    if isinstance(chunk, str):
+        print(chunk, end="", flush=True)
 ```
 
+Fine-tune what gets streamed:
 
-### Instructions
+```python
+response = await agent.run(
+    "Tell me a story",
+    stream=True,
+    stream_tokens=True,        # Yield individual tokens as strings (default: True)
+    stream_delimiters=True,    # Yield MessageDelimiter events for message boundaries
+    stream_tool_calls=True,    # Yield tool call deltas as they arrive
+    stream_response=True,      # Yield the final Response object at the end of the stream
+)
+```
 
-Instructions are passed to the LLM as the `system` message. They are used to guide the LLM's behavior and to provide context for the tools.
-SlimAgents does not come with pre-defined instructions, so your agent's behavior is entirely controlled by the information you provide as
-instructions and in the tool documentation. 
+When `stream_response=True`, the final item in the stream is a `Response` object:
 
-Instructions can be dynamic, i.e. generated based on the agent's state. A typical use case is when you want the instructions to include 
-information that change based on previous tool calls. To accomplish this, simply override the `instructions` property of the agent:
+```python
+from slimagents import Response
+
+async for chunk in response:
+    if isinstance(chunk, Response):
+        print(f"\nTokens used: {chunk.metadata.total_tokens}")
+    elif isinstance(chunk, str):
+        print(chunk, end="")
+```
+
+## The Response object
+
+`run()` and `run_sync()` return a `Response[T]` with:
+
+```python
+response = agent.run_sync("Hello!")
+
+response.value          # The response content (str, dict, or BaseModel depending on response_format)
+response.memory_delta   # List of messages added during this call
+response.agent          # The agent that produced the response (may differ from original if handoff occurred)
+response.metadata       # ResponseMetadata with token counts and cost
+```
+
+`ResponseMetadata` tracks usage across all turns:
+
+```python
+meta = response.metadata
+meta.input_tokens       # Total input tokens
+meta.output_tokens      # Total output tokens
+meta.total_tokens       # Total tokens
+meta.cost               # Total cost (USD)
+```
+
+## Interactive CLI
+
+Use `run_demo_loop` to quickly test an agent in your terminal:
 
 ```python
 from slimagents import Agent, run_demo_loop
 
-class StrictAgent(Agent):
-    def __init__(self, max_responses: int):
-        super().__init__(
-            tools=[self.update_responses_left],
-        )
-        self._answers_left = max_responses
-
-    @property
-    def instructions(self) -> str:
-        if self._answers_left >= 0:
-            return f"""You are a helpful assistant. 
-You currently have {self._answers_left} responses left.
-ALWAYS call the `update_responses_left` tool before you respond."""
-        else:
-            return "You always answer 'I can't answer that.'."
-
-    def update_responses_left(self):
-        """IMPORTANT! You ALWAYS call this tool before you respond, no matter what the user says."""
-        self._answers_left -= 1
-        return "Good! You may now answer the question."
-
-agent = StrictAgent(2) # This agent will only respond 2 times.
-run_demo_loop(agent)
+agent = Agent(instructions="You are a helpful assistant.")
+run_demo_loop(agent, stream=True)
 ```
 
 ```
 Starting SlimAgents CLI 🪶
-User: Hi
-StrictAgent: update_responses_left()
-StrictAgent: Hello! How can I assist you today?
-User: How many answers left?
-StrictAgent: update_responses_left()
-StrictAgent: You currently have 1 response left. How else may I assist you?
-User: 2 + 2?                        
-StrictAgent: update_responses_left()
-StrictAgent: I can't answer that.
-User: Why not?
-StrictAgent: update_responses_left()
-StrictAgent: I can't answer that.
+User: Hello!
+Agent: Hi there! How can I help you today?
+User:
 ```
 
-This example also illustrates the `run_demo_loop` function. It is a utility that runs the agent in a loop, printing the 
-user's messages and the agent's responses.
+## Logging
 
-
-### Memory
-
-The memory of an agent is simply the history of the agent's messages, using the same format as the chat history in the OpenAI API
-(but without the 'system' or 'developer' message). Tool selection and tool call results are added to the memory, as well as the 
-LLM's response when the agent is done.
-
-
-### Handoffs
-
-Sometimes it is useful to let one agent transfer control to another agent. This is useful when it becomes too complicated for one agent 
-to encapsulate all instructions and tools to handle every request. To accomplish such handoffs, simply return an `Agent` from a tool call:
+SlimAgents uses Python's standard `logging` module:
 
 ```python
-sales_agent = Agent(name="Sales Agent")
+import logging
+from slimagents import logger
 
-def transfer_to_sales():
-   return sales_agent
-
-agent = Agent(tools=[transfer_to_sales])
-
-response = agent.run_sync("Transfer me to sales.")
-print(response.agent.name)
+logging.basicConfig(level=logging.INFO)
+logger.setLevel(logging.DEBUG)  # Verbose agent logs
 ```
 
-```
-Sales Agent
-```
+## Origin
 
-Note: When using handoffs, the memory of the original agent will be shared with the new agent. This means that the new agent will have 
-access to the original agent's memory, and any changes to the memory will be reflected in both agents.
+SlimAgents started as a fork of OpenAI's [Swarm](https://github.com/openai/swarm) framework. Major differences:
 
-If you think this feature looks like it is borrowed from OpenAI's [Swarm](https://github.com/openai/swarm) framework, you are right! In fact, 
-SlimAgents started out as a fork of Swarm, so big shoutout to OpenAI and the Swarm team for the inspiration!
+- Works with any LLM (not just OpenAI)
+- Designed for subclassing `Agent` to encapsulate behavior
+- Async-native with concurrent tool execution
+- Multi-modal input support
+- Structured outputs with Pydantic
+- Proper Python logging
 
-Major changes from Swarm:
-- Supports virtually any LLM
-- Designed for subclassing `Agent` to encapsulate agent behavior
-- Supports async, concurrent tool calls
-- Uses proper Python logging instead of print statements
-- Supports multi modal inputs (see below)
-- Supports structured outputs with Pydantic (see below)
+## License
 
-
-### Multi modal inputs
-
-SlimAgents makes it easy to use multi modal inputs like images, videos, audio files and PDF files (as long as these types are supported by the LLM).
-Here's an example:
-
-```python
-from slimagents import Agent
-
-pdf_converter = Agent(
-    model="gemini/gemini-2.0-flash", # 👈 Gemini 2.0 Flash supports PDF files as input
-    instructions="Your task is to convert PDF files to Markdown"
-)
-
-with open("annual_report.pdf", "rb") as pdf_file:
-    value = pdf_converter.apply(pdf_file)
-    print(value)
-```
-
-
-### Structured outputs
-
-WIP
-
-
-### The response object
-
-WIP
-
-
-### Response type
-
-WIP
-
-
-### Handoff vs tool call
-
-WIP
-
-
-### For development
-
-```shell
-source .venv/bin/activate
-pip install -e .
-```
-Run tests:
-```shell
-python -m pytest
-```
+MIT
