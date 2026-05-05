@@ -207,7 +207,8 @@ class Agent(Generic[T]):
                 Determines the type parameter T: None → str, dict → dict, BaseModel subclass → that subclass.
             temperature (Optional[float]): Temperature for response generation.
             logger (Optional[logging.Logger]): Custom logger instance.
-            **lite_llm_args: Additional arguments passed to the LLM.
+            **lite_llm_args: Additional arguments passed to the LLM (e.g. num_retries, api_base,
+                fallbacks, context_window_fallback_dict). See LiteLLM docs for all options.
         """
         self._name = name or self.__class__.__name__
         self._model = model or DEFAULT_MODEL

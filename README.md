@@ -125,6 +125,24 @@ Any extra keyword arguments are passed through to LiteLLM:
 agent = Agent(model="gpt-4.1", api_key="sk-...", base_url="https://my-proxy.com")
 ```
 
+### LiteLLM parameters
+
+All [LiteLLM-specific parameters](https://docs.litellm.ai/docs/completion/input) are supported via keyword arguments:
+
+```python
+# Retry transient errors (429, 500+) with exponential backoff
+agent = Agent(num_retries=3)
+
+# Fallback to a different model on context window errors
+agent = Agent(
+    model="gpt-4.1",
+    context_window_fallback_dict={"gpt-4.1": "gpt-4.1-mini"},
+)
+
+# Model fallbacks on any failure
+agent = Agent(model="gpt-4.1", fallbacks=["anthropic/claude-sonnet-4-20250514"])
+```
+
 ## Instructions
 
 Instructions become the system message. They can be a string or a callable for dynamic instructions:

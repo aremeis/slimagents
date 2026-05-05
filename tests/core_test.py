@@ -713,3 +713,19 @@ async def test_log_separate_agent_logger2():
         """
     )
     assert log == expected_log
+
+
+def test_lite_llm_args_passthrough():
+    agent = Agent(instructions="test", num_retries=3, api_base="https://example.com")
+    params = agent._Agent__get_all_chat_completion_params()
+    assert params["num_retries"] == 3
+    assert params["api_base"] == "https://example.com"
+
+
+def test_lite_llm_args_via_setter():
+    agent = Agent(instructions="test")
+    params = agent._Agent__get_all_chat_completion_params()
+    assert "num_retries" not in params
+    agent.lite_llm_args = {"num_retries": 5}
+    params = agent._Agent__get_all_chat_completion_params()
+    assert params["num_retries"] == 5
