@@ -563,7 +563,7 @@ async def test_log_debug_basic():
         """\
         DEBUG | slimagents.Agent | Run XXXXXX-0: Starting run with input(s): ('What is 2 + 2?',)
         DEBUG | slimagents.Agent | Run XXXXXX-0: Getting chat completion for: [{'role': 'system', 'content': 'You always answer YES verbatim to all questions.'}, {'role': 'user', 'content': 'What is 2 + 2?'}]
-        DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Received completion: {'content': 'YES', 'role': 'assistant', 'tool_calls': None, 'function_call': None, 'annotations': [], 'sender': 'Agent'}
+        DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Received completion: {'content': 'YES', 'role': 'assistant', 'tool_calls': None, 'function_call': None, 'provider_specific_fields': None, 'annotations': [], 'sender': 'Agent'}
         DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Run completed with value YES
         """
     )
@@ -590,7 +590,7 @@ async def test_log_debug_tool_call():
         """\
         DEBUG | slimagents.Agent | Run XXXXXX-0: Starting run with input(s): ('What is 2 + 2?',)
         DEBUG | slimagents.Agent | Run XXXXXX-0: Getting chat completion for: [{'role': 'system', 'content': "You don't know math, but you have a calculator that you rely on."}, {'role': 'user', 'content': 'What is 2 + 2?'}]
-        DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Received completion: {'content': None, 'role': 'assistant', 'tool_calls': [{'function': {'arguments': '{"expression":"2 + 2"}', 'name': 'calculator'}, 'id': 'call_XXXX', 'type': 'function'}], 'function_call': None, 'annotations': [], 'sender': 'Agent'}
+        DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Received completion: {'content': None, 'role': 'assistant', 'tool_calls': [{'function': {'arguments': '{"expression":"2 + 2"}', 'name': 'calculator'}, 'id': 'call_XXXX', 'type': 'function'}], 'function_call': None, 'provider_specific_fields': None, 'annotations': [], 'sender': 'Agent'}
         DEBUG | slimagents.Agent | Run XXXXXX-0: Processing tool call 'calculator' (id: 'call_XXXX') with arguments {'expression': '2 + 2'}
         DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Tool call 'calculator' (id: 'call_XXXX') returned ToolResult(value=4, agent=None, is_final_answer=True, handoff=False)
         DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Run completed due to final answer reached in tool call: 4
@@ -620,7 +620,8 @@ async def test_log_debug_stream_basic():
         """\
         DEBUG | slimagents.Agent | Run XXXXXX-0: Starting run with input(s): ('What is 2 + 2?',)
         DEBUG | slimagents.Agent | Run XXXXXX-0: Getting chat completion for: [{'role': 'system', 'content': 'You always answer YES verbatim to all questions.'}, {'role': 'user', 'content': 'What is 2 + 2?'}]
-        DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'refusal': None, 'content': 'YES', 'role': 'assistant', 'function_call': None, 'tool_calls': None, 'audio': None}
+        DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'refusal': None, 'content': '', 'role': 'assistant', 'function_call': None, 'tool_calls': None, 'audio': None}
+        DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'refusal': None, 'content': 'YES', 'role': None, 'function_call': None, 'tool_calls': None, 'audio': None}
         DEBUG | slimagents.Agent | Run XXXXXX-0: Received delta: {'provider_specific_fields': None, 'content': None, 'role': None, 'function_call': None, 'tool_calls': None, 'audio': None}
         DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Received completion: {'content': 'YES', 'sender': 'Agent', 'role': 'assistant', 'function_call': None, 'tool_calls': None}
         DEBUG | slimagents.Agent | Run XXXXXX-0: (After XX.XX s) Run completed with value YES
