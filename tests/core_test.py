@@ -12,7 +12,7 @@ from slimagents import Agent
 import slimagents.config as config
 import litellm
 from litellm.caching.caching import Cache
-from pydantic import AnyUrl, BaseModel
+from pydantic import AnyUrl, BaseModel, ValidationError
 import re
 import logging
 import io
@@ -351,6 +351,101 @@ async def test_response_format():
     assert value[1].last_name == "Smith"
     assert value[2].first_name == "Jim"
     assert value[2].last_name == "Beam"
+
+class _FakeMessage:
+    def __init__(self, content):
+        self._content = content
+    def model_dump(self):
+        return {"content": self._content, "tool_calls": None, "role": "assistant"}
+
+class _FakeChoice:
+    def __init__(self, content):
+        self.message = _FakeMessage(content)
+
+class _FakeCompletion:
+    def __init__(self, content):
+        self.choices = [_FakeChoice(content)]
+        self.usage = None
+        self._hidden_params = {}
+
+
+def _make_fake_acompletion(responses):
+    """Returns (fake_acompletion, call_count_holder). responses is a list of content strings."""
+    calls = {"count": 0}
+    async def fake_acompletion(**kwargs):
+        i = calls["count"]
+        calls["count"] += 1
+        if i >= len(responses):
+            raise AssertionError(f"Unexpected extra LLM call #{i+1}")
+        return _FakeCompletion(responses[i])
+    return fake_acompletion, calls
+
+
+class _RetryItem(BaseModel):
+    name: str
+    value: int
+
+
+@pytest.mark.asyncio
+async def test_response_format_retry_succeeds(monkeypatch):
+    bad = '{"name": "foo", "value": '  # truncated
+    good = '{"name": "foo", "value": 42}'
+    fake, calls = _make_fake_acompletion([bad, good])
+    monkeypatch.setattr("slimagents.core.acompletion", fake)
+
+    agent = Agent(response_format=_RetryItem)
+    memory_delta = []
+    value = await agent("anything", memory_delta=memory_delta)
+    assert calls["count"] == 2
+    assert isinstance(value, _RetryItem)
+    assert value.value == 42
+    # memory_delta: user input, bad assistant, retry user message, good assistant
+    assert len(memory_delta) == 4
+    assert memory_delta[0]["role"] == "user"
+    assert memory_delta[1]["role"] == "assistant"
+    assert memory_delta[1]["content"] == bad
+    assert memory_delta[2]["role"] == "user"
+    assert "could not be parsed" in memory_delta[2]["content"]
+    assert memory_delta[3]["role"] == "assistant"
+    assert memory_delta[3]["content"] == good
+
+
+@pytest.mark.asyncio
+async def test_response_format_retry_exhausted(monkeypatch):
+    bad = '{"name": "foo", "value": '
+    fake, calls = _make_fake_acompletion([bad, bad, bad, bad])
+    monkeypatch.setattr("slimagents.core.acompletion", fake)
+
+    agent = Agent(response_format=_RetryItem)  # default 1 retry => 2 calls
+    with pytest.raises(ValidationError):
+        await agent("anything")
+    assert calls["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_response_format_retries_zero(monkeypatch):
+    bad = '{"name": "foo", "value": '
+    fake, calls = _make_fake_acompletion([bad, bad])
+    monkeypatch.setattr("slimagents.core.acompletion", fake)
+
+    agent = Agent(response_format=_RetryItem, response_format_retries=0)
+    with pytest.raises(ValidationError):
+        await agent("anything")
+    assert calls["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_response_format_retries_per_call_override(monkeypatch):
+    bad = '{"name": "foo", "value": '
+    good = '{"name": "foo", "value": 7}'
+    fake, calls = _make_fake_acompletion([bad, bad, bad, good])
+    monkeypatch.setattr("slimagents.core.acompletion", fake)
+
+    agent = Agent(response_format=_RetryItem)  # default 1 retry
+    value = await agent("anything", response_format_retries=3)
+    assert calls["count"] == 4
+    assert value.value == 7
+
 
 @pytest.mark.asyncio
 async def test_non_string_output():

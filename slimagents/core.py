@@ -16,7 +16,7 @@ import logging
 # Package/library imports
 from litellm import Usage, acompletion
 
-from pydantic import AnyUrl, BaseModel
+from pydantic import AnyUrl, BaseModel, ValidationError
 
 # Local imports
 from .util import PrimitiveResult, function_to_json, get_mime_type_from_content, get_mime_type_from_file_like_object, get_pydantic_type, merge_chunk, type_to_response_format
@@ -159,6 +159,7 @@ class Agent(Generic[T]):
             response_format: None = ...,
             temperature: Optional[float] = ...,
             logger: Optional[logging.Logger] = ...,
+            response_format_retries: int = ...,
             **lite_llm_args: Any,
     ) -> None: ...
 
@@ -175,6 +176,7 @@ class Agent(Generic[T]):
             response_format: Union[dict, type[T]] = ...,
             temperature: Optional[float] = ...,
             logger: Optional[logging.Logger] = ...,
+            response_format_retries: int = ...,
             **lite_llm_args: Any,
     ) -> None: ...
 
@@ -190,6 +192,7 @@ class Agent(Generic[T]):
             response_format: Optional[Union[dict, type]] = None,
             temperature: Optional[float] = None,
             logger: Optional[logging.Logger] = None,
+            response_format_retries: int = 1,
             **lite_llm_args: Any,
     ):
         """
@@ -207,6 +210,9 @@ class Agent(Generic[T]):
                 Determines the type parameter T: None → str, dict → dict, BaseModel subclass → that subclass.
             temperature (Optional[float]): Temperature for response generation.
             logger (Optional[logging.Logger]): Custom logger instance.
+            response_format_retries (int): Number of times to retry the LLM call when the response cannot
+                be parsed against the configured response_format (e.g. invalid JSON or Pydantic validation
+                failure). Only meaningful when response_format is set. Defaults to 1.
             **lite_llm_args: Additional arguments passed to the LLM (e.g. num_retries, api_base,
                 fallbacks, context_window_fallback_dict). See LiteLLM docs for all options.
         """
@@ -220,6 +226,7 @@ class Agent(Generic[T]):
         self._response_format = get_pydantic_type(response_format)
         self._temperature = temperature
         self._lite_llm_args = lite_llm_args
+        self._response_format_retries = response_format_retries
 
         # Set up logging
         if logger:
@@ -320,6 +327,13 @@ class Agent(Generic[T]):
         if value != self._temperature:
             self.__all_chat_completion_params = None
             self._temperature = value
+
+    @property
+    def response_format_retries(self) -> int:
+        return self._response_format_retries
+    @response_format_retries.setter
+    def response_format_retries(self, value: int) -> None:
+        self._response_format_retries = value
 
     @property
     def lite_llm_args(self) -> dict:
@@ -437,6 +451,24 @@ class Agent(Generic[T]):
                 self.logger.error(error_message, result, str(e))
                 raise TypeError(error_message % (result, str(e)))
             
+
+    _RESPONSE_FORMAT_RETRY_MESSAGE = (
+        "Your previous response could not be parsed as the required structured output.\n"
+        "Error: {error}\n"
+        "Please reply again with a valid response that matches the schema. "
+        "Return only the structured output, no prose."
+    )
+
+    def _try_parse_value(self, content: str) -> tuple[bool, Any]:
+        """
+        Attempt to parse content into the agent's response_format.
+        Returns (True, value) on success, (False, exception) on parse failure.
+        Only catches JSON / Pydantic validation errors; other exceptions propagate.
+        """
+        try:
+            return True, self._get_value(content)
+        except (ValidationError, json.JSONDecodeError) as e:
+            return False, e
 
     def _get_value(self, content: str) -> T:
         if self.response_format:
@@ -671,11 +703,13 @@ class Agent(Generic[T]):
             max_turns: float,
             execute_tools: bool,
             caching: bool,
+            response_format_retries: int = 0,
     ) -> StreamResponse:
         t0_run = time.time()
         active_agent = self
         turns = 0
         metadata = None
+        retries_left = response_format_retries
 
         while turns < max_turns:
             active_agent._before_chat_completion()
@@ -736,6 +770,19 @@ class Agent(Generic[T]):
 
             if not message["tool_calls"] or not execute_tools:
                 memory_delta.append(message)
+                if active_agent.response_format and execute_tools and retries_left > 0:
+                    ok, value_or_err = active_agent._try_parse_value(message["content"] or "")
+                    if not ok:
+                        active_agent.logger.warning(
+                            "Run %s-%d: Failed to parse response against response_format (%d retries left): %s",
+                            run_id, turns, retries_left, value_or_err,
+                        )
+                        memory_delta.append({
+                            "role": "user",
+                            "content": active_agent._RESPONSE_FORMAT_RETRY_MESSAGE.format(error=value_or_err),
+                        })
+                        retries_left -= 1
+                        continue
                 break
 
             # handle function calls and switching agents
@@ -774,11 +821,13 @@ class Agent(Generic[T]):
             max_turns: float = float("inf"),
             execute_tools: bool = True,
             caching: bool = False,
+            response_format_retries: int = 0,
     ) -> Response[T]:
         t0_run = time.time()
         active_agent = self
         turns = 0
         metadata = None
+        retries_left = response_format_retries
 
         while turns < max_turns and active_agent:
             active_agent._before_chat_completion()
@@ -793,6 +842,19 @@ class Agent(Generic[T]):
 
             if not message["tool_calls"] or not execute_tools:
                 memory_delta.append(message)
+                if active_agent.response_format and execute_tools and retries_left > 0:
+                    ok, value_or_err = active_agent._try_parse_value(message["content"] or "")
+                    if not ok:
+                        active_agent.logger.warning(
+                            "Run %s-%d: Failed to parse response against response_format (%d retries left): %s",
+                            run_id, turns, retries_left, value_or_err,
+                        )
+                        memory_delta.append({
+                            "role": "user",
+                            "content": active_agent._RESPONSE_FORMAT_RETRY_MESSAGE.format(error=value_or_err),
+                        })
+                        retries_left -= 1
+                        continue
                 break
 
             # handle function calls and switching agents
@@ -801,11 +863,11 @@ class Agent(Generic[T]):
                 active_agent._update_partial_response(partial_response, tool_call, result)
                 if partial_response.result:
                     break
-            
+
             response = active_agent._handle_partial_response(run_id, turns, t0_run, partial_response, message, memory, memory_delta, metadata)
             if response:
                 return response
-            
+
             if partial_response.agent:
                 active_agent = partial_response.agent
 
@@ -833,6 +895,7 @@ class Agent(Generic[T]):
             max_turns: float = ...,
             execute_tools: bool = ...,
             caching: Optional[bool] = ...,
+            response_format_retries: Optional[int] = ...,
     ) -> Response[T]: ...
 
     @overload
@@ -849,6 +912,7 @@ class Agent(Generic[T]):
             max_turns: float = ...,
             execute_tools: bool = ...,
             caching: Optional[bool] = ...,
+            response_format_retries: Optional[int] = ...,
     ) -> StreamResponse: ...
 
     async def run(
@@ -864,6 +928,7 @@ class Agent(Generic[T]):
             max_turns: float = float("inf"),
             execute_tools: bool = True,
             caching: Optional[bool] = None,
+            response_format_retries: Optional[int] = None,
     ) -> Union[Response[T], StreamResponse]:
         """
         Run the agent with the given inputs and return a response.
@@ -894,12 +959,14 @@ class Agent(Generic[T]):
             memory = []
         if caching is None:
             caching = config.caching
+        if response_format_retries is None:
+            response_format_retries = self._response_format_retries
 
         if memory_delta is None:
             memory_delta = []
         elif memory_delta:
             raise ValueError("memory_delta must be an empty list if provided as a parameter")
-        
+
         if inputs:
             memory_delta.append(self._get_user_message(inputs))
 
@@ -922,6 +989,7 @@ class Agent(Generic[T]):
                 max_turns=max_turns,
                 execute_tools=execute_tools,
                 caching=caching,
+                response_format_retries=response_format_retries,
             )
         else:
             return await self._run(
@@ -931,6 +999,7 @@ class Agent(Generic[T]):
                 max_turns=max_turns,
                 execute_tools=execute_tools,
                 caching=caching,
+                response_format_retries=response_format_retries,
             )
 
 
@@ -948,6 +1017,7 @@ class Agent(Generic[T]):
             max_turns: float = ...,
             execute_tools: bool = ...,
             caching: Optional[bool] = ...,
+            response_format_retries: Optional[int] = ...,
     ) -> Response[T]: ...
 
     @overload
@@ -964,6 +1034,7 @@ class Agent(Generic[T]):
             max_turns: float = ...,
             execute_tools: bool = ...,
             caching: Optional[bool] = ...,
+            response_format_retries: Optional[int] = ...,
     ) -> StreamResponse: ...
 
     def run_sync(
@@ -979,6 +1050,7 @@ class Agent(Generic[T]):
             max_turns: float = float("inf"),
             execute_tools: bool = True,
             caching: Optional[bool] = None,
+            response_format_retries: Optional[int] = None,
     ) -> Union[Response[T], StreamResponse]:
         """
         Synchronously run the agent with the given inputs and return a response.
@@ -1024,6 +1096,7 @@ class Agent(Generic[T]):
                 max_turns=max_turns,
                 execute_tools=execute_tools,
                 caching=caching,
+                response_format_retries=response_format_retries,
             )
         )
 
@@ -1042,6 +1115,7 @@ class Agent(Generic[T]):
             max_turns: float = ...,
             execute_tools: bool = ...,
             caching: Optional[bool] = ...,
+            response_format_retries: Optional[int] = ...,
     ) -> T: ...
 
     @overload
@@ -1058,6 +1132,7 @@ class Agent(Generic[T]):
             max_turns: float = ...,
             execute_tools: bool = ...,
             caching: Optional[bool] = ...,
+            response_format_retries: Optional[int] = ...,
     ) -> StreamResponse: ...
 
     def apply(
@@ -1073,6 +1148,7 @@ class Agent(Generic[T]):
             max_turns: float = float("inf"),
             execute_tools: bool = True,
             caching: Optional[bool] = None,
+            response_format_retries: Optional[int] = None,
     ) -> Union[T, StreamResponse]:
         """
         Synchronously apply the agent to the inputs and return the response value.
@@ -1111,6 +1187,7 @@ class Agent(Generic[T]):
             max_turns=max_turns,
             execute_tools=execute_tools,
             caching=caching,
+            response_format_retries=response_format_retries,
         )
         if stream:
             return cast(StreamResponse, response)
@@ -1133,6 +1210,7 @@ class Agent(Generic[T]):
             max_turns: float = ...,
             execute_tools: bool = ...,
             caching: Optional[bool] = ...,
+            response_format_retries: Optional[int] = ...,
     ) -> T: ...
 
     @overload
@@ -1149,6 +1227,7 @@ class Agent(Generic[T]):
             max_turns: float = ...,
             execute_tools: bool = ...,
             caching: Optional[bool] = ...,
+            response_format_retries: Optional[int] = ...,
     ) -> StreamResponse: ...
 
     async def __call__(
@@ -1164,6 +1243,7 @@ class Agent(Generic[T]):
             max_turns: float = float("inf"),
             execute_tools: bool = True,
             caching: Optional[bool] = None,
+            response_format_retries: Optional[int] = None,
     ) -> Union[T, StreamResponse]:
         """
         Asynchronously apply the agent to the inputs and return the response value.
@@ -1190,7 +1270,7 @@ class Agent(Generic[T]):
         Raises:
             ValueError: If memory_delta is provided and not empty.
         """
-        response = await self.run(  # type: ignore[call-overload]
+        response = await self.run(  # type: ignore[call-overload, misc]
             *inputs,
             memory=memory,
             memory_delta=memory_delta,
@@ -1202,6 +1282,7 @@ class Agent(Generic[T]):
             max_turns=max_turns,
             execute_tools=execute_tools,
             caching=caching,
+            response_format_retries=response_format_retries,
         )
         if stream:
             return cast(StreamResponse, response)
