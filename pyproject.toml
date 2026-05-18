@@ -36,8 +36,11 @@ classifiers = [
 
 [tool.setuptools]
 packages = {find = {where = ["."], exclude = ["tests*"]}}
-zip-safe = true
+zip-safe = false
 include-package-data = true
+
+[tool.setuptools.package-data]
+slimagents = ["py.typed"]
 
 [tool.autopep8]
 max_line_length = 120
