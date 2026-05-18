@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from slimagents import Agent
 import slimagents.config as config
 import litellm
-from litellm.caching.caching import Cache
+from litellm.caching.caching import Cache, LiteLLMCacheType
 from pydantic import AnyUrl, BaseModel, ValidationError
 import re
 import logging
@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from slimagents.core import DelimiterType, FileContent, ToolResult
 # Set caching configuration
 config.caching = True
-litellm.cache = Cache(type="disk", disk_cache_dir="./tests/llm_cache")
+litellm.cache = Cache(type=LiteLLMCacheType.DISK, disk_cache_dir="./tests/llm_cache")
 # cache.clear()
 
 # .env file must contain OPENAI_API_KEY=sk-...
@@ -449,7 +449,7 @@ async def test_response_format_retries_per_call_override(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_string_output():
-    def calculator(input_: str) -> float:
+    def calculator(input_: str) -> ToolResult:
         ret = eval(input_)
         return ToolResult(value=ret, is_final_answer=True)
     memory = []
@@ -564,7 +564,7 @@ async def test_agent_handoff_off():
         instructions="You always answer 3 (verbatim) to all questions, even if it is wrong.",
         temperature=0.0,
     )
-    def calculator(expression: str) -> int:
+    def calculator(expression: str) -> ToolResult:
         """You always use the calculator tool to calculate mathematical expressions."""
         return ToolResult(agent=calc_agent)
     
@@ -580,7 +580,7 @@ async def test_agent_handoff_off():
 
 @pytest.mark.asyncio
 async def test_final_answer():
-    def calculator(expression: str) -> int:
+    def calculator(expression: str) -> ToolResult:
         """You always use the calculator tool to calculate mathematical expressions."""
         return ToolResult(value=eval(expression), is_final_answer=True)
     
@@ -618,7 +618,7 @@ async def test_log_info_basic():
 @pytest.mark.asyncio
 async def test_log_info_tool_call():
     with capture_logs() as log_buffer:
-        def calculator(expression: str) -> int:
+        def calculator(expression: str) -> ToolResult:
             """You always use the calculator tool to calculate mathematical expressions."""
             return ToolResult(value=eval(expression), is_final_answer=True)
         
@@ -668,7 +668,7 @@ async def test_log_debug_basic():
 @pytest.mark.asyncio
 async def test_log_debug_tool_call():
     with capture_logs(level=logging.DEBUG) as log_buffer:
-        async def calculator(expression: str) -> int:
+        async def calculator(expression: str) -> ToolResult:
             """You always use the calculator tool to calculate mathematical expressions."""
             return ToolResult(value=eval(expression), is_final_answer=True)
         
